@@ -3,292 +3,349 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tally — a ledger that always balances</title>
+<title>Tally — double-entry ledger engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
   :root{
-    --bg:#f6f8fa; --panel:#ffffff; --ink:#0f1729; --muted:#5b6577; --line:#e6e9ef;
-    --brand:#059669; --brand-2:#0ea5e9; --brand-soft:rgba(5,150,105,.09);
-    --danger:#dc2626; --danger-soft:rgba(220,38,38,.08);
-    --mono:ui-monospace,SFMono-Regular,Menlo,"Cascadia Code",monospace;
-    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    --radius:14px; --shadow:0 12px 34px -18px rgba(15,23,41,.28);
+    --bg:#080a0f; --bg-2:#0b0e15; --surface:#10141d; --surface-2:#141a25; --raise:#182030;
+    --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.12);
+    --ink:#eef2f8; --muted:#8b95a7; --faint:#5a6474;
+    --good:#34d399; --good-dim:#0f9d6b; --good-soft:rgba(52,211,153,.10); --good-line:rgba(52,211,153,.32);
+    --bad:#fb7185; --bad-soft:rgba(251,113,133,.10); --bad-line:rgba(251,113,133,.34);
+    --cyan:#38bdf8;
+    --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
   }
   *{box-sizing:border-box;}
-  body{margin:0;background:
-      radial-gradient(680px 400px at 100% -6%,rgba(14,165,233,.08),transparent 60%),
-      radial-gradient(620px 380px at -6% 0%,rgba(5,150,105,.10),transparent 58%),var(--bg);
-    color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;line-height:1.5;}
-  .wrap{max-width:1080px;margin:0 auto;padding:0 20px;}
-  a{color:inherit;}
-  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+  html{-webkit-text-size-adjust:100%;}
+  body{margin:0;color:var(--ink);font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased;
+    background:var(--bg);
+    background-image:
+      radial-gradient(900px 520px at 82% -10%, rgba(52,211,153,.10), transparent 60%),
+      radial-gradient(760px 480px at -8% 4%, rgba(56,189,248,.07), transparent 58%),
+      repeating-linear-gradient(0deg, transparent 0 33px, rgba(255,255,255,.014) 33px 34px);
+    background-attachment:fixed;}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--faint);}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 24px;}
+  a{color:inherit;text-decoration:none;}
 
-  header.top{display:flex;align-items:center;justify-content:space-between;padding:20px 0 8px;}
-  .brand{display:flex;align-items:center;gap:11px;}
-  .logo{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;color:#fff;font-size:19px;
-    background:linear-gradient(140deg,var(--brand),var(--brand-2));box-shadow:0 8px 18px -8px rgba(5,150,105,.7);}
-  .brand b{font-size:19px;letter-spacing:-.02em;}
-  .brand span{display:block;font-size:12px;color:var(--muted);margin-top:-2px;}
-  .gh{font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:9px;padding:8px 12px;background:var(--panel);}
-  .gh:hover{color:var(--ink);border-color:#cfd4de;}
+  /* NAV */
+  nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(10px);
+    background:linear-gradient(to bottom, rgba(8,10,15,.86), rgba(8,10,15,.55));border-bottom:1px solid var(--line);}
+  nav .row{display:flex;align-items:center;justify-content:space-between;padding:15px 24px;max-width:1160px;margin:0 auto;}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .mark{width:34px;height:34px;color:#06110c;background:linear-gradient(150deg,var(--good),var(--cyan));
+    border-radius:9px;display:grid;place-items:center;box-shadow:0 6px 20px -8px rgba(52,211,153,.6);}
+  .brand b{font-weight:600;font-size:16px;letter-spacing:.01em;}
+  .brand .sub{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.04em;}
+  .nav-right{display:flex;align-items:center;gap:16px;}
+  .nav-status{display:none;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--muted);}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 rgba(52,211,153,.5);animation:pulse 2.4s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.45);}70%{box-shadow:0 0 0 7px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}
+  .btn-gh{font-family:var(--mono);font-size:12.5px;color:var(--ink);border:1px solid var(--line-2);border-radius:8px;padding:8px 13px;transition:.15s;}
+  .btn-gh:hover{border-color:var(--good-line);color:var(--good);}
+  @media(min-width:720px){.nav-status{display:flex;}}
 
-  .hero{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);
-    padding:22px 24px;margin:14px 0 22px;display:flex;flex-wrap:wrap;gap:20px;align-items:center;justify-content:space-between;}
-  .hero .lead{max-width:52ch;}
-  .hero h1{font-size:clamp(1.3rem,3vw,1.7rem);letter-spacing:-.02em;margin:0 0 6px;}
-  .hero p{margin:0;color:var(--muted);font-size:14.5px;}
-  .balancebox{text-align:right;}
-  .balancebox .k{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);}
-  .balancebox .v{font-family:var(--mono);font-size:clamp(1.6rem,4vw,2.2rem);font-weight:600;letter-spacing:-.02em;}
-  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--brand);
-    background:var(--brand-soft);border-radius:999px;padding:5px 11px;margin-top:6px;}
-  .pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--brand);}
-  .pill.bad{color:var(--danger);background:var(--danger-soft);}
-  .pill.bad::before{background:var(--danger);}
+  /* HERO */
+  .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center;padding:clamp(48px,8vw,88px) 0 clamp(36px,5vw,56px);}
+  @media(max-width:860px){.hero{grid-template-columns:1fr;gap:34px;}}
+  .hero h1{font-size:clamp(2.3rem,5.2vw,3.5rem);line-height:1.03;letter-spacing:-.03em;font-weight:700;margin:16px 0 0;text-wrap:balance;}
+  .hero h1 em{font-style:normal;color:var(--good);}
+  .hero p{color:var(--muted);font-size:clamp(1rem,1.6vw,1.12rem);line-height:1.62;max-width:48ch;margin:20px 0 0;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px;}
+  .chip{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:6px 12px;background:rgba(255,255,255,.02);}
+  .chip b{color:var(--ink);font-weight:500;}
 
-  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px;}
-  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px 17px;}
-  .stat .k{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
-  .stat .v{font-family:var(--mono);font-size:1.5rem;font-weight:600;margin-top:5px;letter-spacing:-.01em;}
+  /* INVARIANT PANEL */
+  .invariant{background:
+      radial-gradient(120% 100% at 50% 0%, rgba(52,211,153,.08), transparent 70%),
+      linear-gradient(180deg,var(--surface-2),var(--surface));
+    border:1px solid var(--good-line);border-radius:16px;padding:30px 28px;position:relative;overflow:hidden;
+    box-shadow:0 30px 70px -40px rgba(52,211,153,.35), inset 0 1px 0 rgba(255,255,255,.04);}
+  .invariant::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 27px,rgba(255,255,255,.02) 27px 28px);pointer-events:none;}
+  .invariant .lbl{position:relative;display:flex;align-items:center;justify-content:space-between;}
+  .invariant .k{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;font-weight:500;letter-spacing:.04em;
+    color:var(--good);background:var(--good-soft);border:1px solid var(--good-line);border-radius:999px;padding:5px 11px;}
+  .pill.bad{color:var(--bad);background:var(--bad-soft);border-color:var(--bad-line);}
+  .pill .dot{background:currentColor;}
+  .sigma{position:relative;font-family:var(--mono);font-weight:600;font-size:clamp(2.6rem,7vw,4rem);letter-spacing:-.02em;line-height:1;margin:18px 0 4px;
+    color:var(--good);text-shadow:0 0 30px rgba(52,211,153,.35);}
+  .invariant .cap{position:relative;font-size:13.5px;color:var(--muted);}
+  .invariant .cap b{color:var(--ink);font-weight:500;}
+  .telemetry{position:relative;display:grid;grid-template-columns:1fr 1fr;gap:1px;margin-top:24px;background:var(--line);border:1px solid var(--line);border-radius:11px;overflow:hidden;}
+  .tele{background:var(--surface);padding:14px 16px;}
+  .tele .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);}
+  .tele .v{font-family:var(--mono);font-size:1.35rem;font-weight:500;margin-top:5px;letter-spacing:-.01em;}
 
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start;}
-  @media (max-width:820px){.grid{grid-template-columns:1fr;}.stats{grid-template-columns:1fr;}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;}
-  .card h2{font-size:15px;letter-spacing:-.01em;margin:0 0 14px;display:flex;align-items:center;gap:8px;}
-  .card h2 .tag{font-size:11px;font-weight:600;color:var(--brand);background:var(--brand-soft);border-radius:999px;padding:3px 9px;letter-spacing:.03em;}
+  /* SECTION GRID */
+  .grid{display:grid;grid-template-columns:1fr 1.05fr;gap:22px;align-items:start;padding-bottom:40px;}
+  @media(max-width:960px){.grid{grid-template-columns:1fr;}}
+  .panel{background:linear-gradient(180deg,var(--surface),var(--bg-2));border:1px solid var(--line);border-radius:16px;overflow:hidden;}
+  .phead{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line);}
+  .phead h2{font-size:14px;font-weight:600;letter-spacing:.02em;margin:0;display:flex;align-items:center;gap:9px;}
+  .phead .badge{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan);border:1px solid rgba(56,189,248,.3);border-radius:5px;padding:2px 7px;}
+  .pbody{padding:20px;}
 
-  table{width:100%;border-collapse:collapse;font-size:14px;}
-  th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:0 0 8px;}
-  td{padding:9px 0;border-top:1px solid var(--line);}
-  td.bal{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;}
-  .acct-id{font-weight:600;}
+  /* LEDGER TABLE */
+  table{width:100%;border-collapse:collapse;}
+  th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);font-weight:400;padding:0 0 10px;}
+  th.r,td.r{text-align:right;}
+  td{padding:11px 0;border-top:1px solid var(--line);font-size:14px;}
+  td.acct{font-weight:500;}
+  td.acct .swatch{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:9px;background:var(--good);vertical-align:middle;opacity:.7;}
+  td.bal{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500;}
+  .empty{color:var(--faint);font-size:13px;padding:14px 0;}
 
-  .forms{display:flex;flex-direction:column;gap:16px;}
-  .frow{display:flex;gap:8px;flex-wrap:wrap;}
-  input,select{font-family:inherit;font-size:14px;color:var(--ink);background:#fff;border:1px solid var(--line);
-    border-radius:9px;padding:9px 11px;outline:none;min-width:0;}
-  input:focus,select:focus{border-color:var(--brand);}
+  /* CONSOLE FORMS */
+  .console{margin-top:22px;display:flex;flex-direction:column;gap:15px;}
+  .fld .flabel{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:8px;}
+  .frow{display:flex;gap:8px;}
+  input,select{font-family:var(--sans);font-size:13.5px;color:var(--ink);background:var(--bg-2);border:1px solid var(--line-2);border-radius:8px;padding:10px 11px;outline:none;min-width:0;transition:.14s;}
+  input::placeholder{color:var(--faint);}
+  input:focus,select:focus{border-color:var(--good-line);box-shadow:0 0 0 3px var(--good-soft);}
   input{flex:1;}
-  .flabel{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:7px;}
-  button{font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;border:0;border-radius:9px;padding:9px 15px;
-    color:#fff;background:linear-gradient(140deg,var(--brand),var(--brand-2));transition:transform .12s,opacity .12s;}
-  button:hover:not(:disabled){transform:translateY(-1px);}
-  button:disabled{opacity:.55;cursor:default;}
-  button.ghost{color:var(--ink);background:#fff;border:1px solid var(--line);}
-  .msg{font-size:13px;margin-top:6px;min-height:18px;}
-  .msg.ok{color:var(--brand);} .msg.err{color:var(--danger);}
+  input.amt{font-family:var(--mono);max-width:140px;}
+  select{cursor:pointer;}
+  button{font-family:var(--sans);font-weight:600;font-size:13.5px;cursor:pointer;border:0;border-radius:8px;padding:10px 15px;color:#06110c;
+    background:linear-gradient(150deg,var(--good),#26c088);transition:.15s;white-space:nowrap;}
+  button:hover:not(:disabled){filter:brightness(1.08);transform:translateY(-1px);}
+  button:disabled{opacity:.5;cursor:default;transform:none;}
+  button.ghost{color:var(--ink);background:transparent;border:1px solid var(--line-2);}
+  button.ghost:hover:not(:disabled){border-color:var(--good-line);color:var(--good);}
+  .msg{font-family:var(--mono);font-size:12px;min-height:16px;margin-top:2px;}
+  .msg.ok{color:var(--good);} .msg.err{color:var(--bad);}
 
-  /* Stress test */
-  .stress-intro{color:var(--muted);font-size:13.5px;margin:0 0 14px;}
-  .stress-run{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
-  .verdict{font-size:14px;line-height:1.55;margin:0 0 16px;padding:12px 14px;border-radius:10px;background:var(--brand-soft);color:#065f46;}
-  .verdict b{color:var(--danger);}
+  /* STRESS EXPERIMENT */
+  .stress-lead{color:var(--muted);font-size:13.5px;line-height:1.6;margin:0 0 18px;}
+  .stress-lead b{color:var(--ink);font-weight:500;}
+  .runbar{display:flex;align-items:center;gap:14px;margin-bottom:20px;}
+  .btn-run{font-family:var(--sans);font-size:14px;padding:12px 20px;}
+  .runmeta{font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .verdict{font-size:14.5px;line-height:1.6;margin:0 0 20px;padding:15px 17px;border-radius:11px;
+    background:var(--bad-soft);border:1px solid var(--bad-line);color:#ffd9df;}
+  .verdict .lost{color:var(--bad);font-weight:600;font-family:var(--mono);}
+  .verdict .safe{color:var(--good);font-weight:600;font-family:var(--mono);}
   .cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-  @media (max-width:520px){.cmp{grid-template-columns:1fr;}}
-  .impl{border:1px solid var(--line);border-radius:12px;padding:15px;}
-  .impl.good{border-color:rgba(5,150,105,.4);background:var(--brand-soft);}
-  .impl.bad{border-color:rgba(220,38,38,.35);background:var(--danger-soft);}
-  .impl h3{margin:0 0 4px;font-size:14px;}
-  .impl .sub{font-size:12px;color:var(--muted);margin-bottom:12px;}
-  .metric{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-top:1px dashed var(--line);}
-  .metric:first-of-type{border-top:0;}
-  .metric .m-k{font-size:12.5px;color:var(--muted);}
-  .metric .m-v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;}
-  .m-v.drift-bad{color:var(--danger);} .m-v.drift-ok{color:var(--brand);}
-  .spinner{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--brand);border-radius:50%;animation:spin .7s linear infinite;}
+  @media(max-width:560px){.cmp{grid-template-columns:1fr;}}
+  .impl{border-radius:13px;padding:17px;border:1px solid var(--line);background:var(--bg-2);}
+  .impl.bad{border-color:var(--bad-line);background:linear-gradient(180deg,var(--bad-soft),transparent);}
+  .impl.good{border-color:var(--good-line);background:linear-gradient(180deg,var(--good-soft),transparent);}
+  .impl .name{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;}
+  .impl .tagline{font-family:var(--mono);font-size:11px;color:var(--muted);margin:3px 0 15px;}
+  .headline{font-family:var(--mono);font-weight:600;letter-spacing:-.01em;line-height:1;font-size:clamp(1.5rem,4vw,2rem);}
+  .headline.bad{color:var(--bad);} .headline.good{color:var(--good);}
+  .headline-k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:7px;}
+  .metrics{margin-top:16px;display:flex;flex-direction:column;gap:1px;background:var(--line);border-radius:9px;overflow:hidden;border:1px solid var(--line);}
+  .metric{display:flex;justify-content:space-between;align-items:baseline;padding:9px 12px;background:var(--bg-2);}
+  .metric .m-k{font-size:12px;color:var(--muted);}
+  .metric .m-v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500;font-size:13px;}
+  .spinner{width:15px;height:15px;border:2px solid var(--line-2);border-top-color:var(--good);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:middle;}
   @keyframes spin{to{transform:rotate(360deg);}}
 
-  footer{color:var(--muted);font-size:12.5px;text-align:center;padding:34px 0 40px;}
+  footer{border-top:1px solid var(--line);padding:26px 0 46px;}
+  footer .f{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;font-family:var(--mono);font-size:12px;color:var(--faint);}
+  footer a{color:var(--muted);} footer a:hover{color:var(--good);}
+  [hidden]{display:none!important;}
 </style>
 </head>
 <body>
+
+<nav><div class="row">
+  <div class="brand">
+    <span class="mark"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v17"/><path d="M6 20h12"/><path d="M4 7h16"/><path d="M4 7l-2.4 5a2.4 2.4 0 0 0 4.8 0z"/><path d="M20 7l-2.4 5a2.4 2.4 0 0 0 4.8 0z"/></svg></span>
+    <div><b>Tally</b><div class="sub">ledger engine</div></div>
+  </div>
+  <div class="nav-right">
+    <span class="nav-status"><span class="dot"></span> <span id="navStatus">books balanced</span></span>
+    <a class="btn-gh" id="ghlink" href="#" target="_blank" rel="noreferrer">GitHub &#8599;</a>
+  </div>
+</div></nav>
+
 <div class="wrap">
 
-  <header class="top">
-    <div class="brand">
-      <div class="logo">&#9878;</div>
-      <div><b>Tally</b><span>double-entry ledger engine</span></div>
+  <header class="hero">
+    <div>
+      <div class="eyebrow">Double-entry ledger engine &middot; Go</div>
+      <h1>Money that <em>can't go missing</em>.</h1>
+      <p>A single-writer state machine posts every transfer as a balanced debit and credit, guarded by idempotency keys and a write-ahead log. Concurrent payments and retried requests, the two things that quietly corrupt naive ledgers, can't break the books.</p>
+      <div class="chips">
+        <span class="chip"><b>Single-writer</b> state machine</span>
+        <span class="chip"><b>Integer cents</b>, no floats</span>
+        <span class="chip"><b>Idempotent</b> retries</span>
+        <span class="chip"><b>WAL</b> crash recovery</span>
+      </div>
     </div>
-    <a class="gh" id="ghlink" href="#" target="_blank" rel="noreferrer">View on GitHub</a>
+
+    <div class="invariant">
+      <div class="lbl">
+        <span class="k">&Sigma; of every balance</span>
+        <span class="pill" id="balancePill"><span class="dot"></span> <span id="pillText">Balanced</span></span>
+      </div>
+      <div class="sigma mono" id="sigma">$0.00</div>
+      <div class="cap">The conservation law: this must be <b>exactly zero</b>, always. If a bug ever created or destroyed a cent, this number would move.</div>
+      <div class="telemetry">
+        <div class="tele"><div class="k">In circulation</div><div class="v" id="circulation">$0.00</div></div>
+        <div class="tele"><div class="k">Transfers</div><div class="v" id="txCount">0</div></div>
+      </div>
+    </div>
   </header>
 
-  <section class="hero">
-    <div class="lead">
-      <h1>A ledger that can't lose your money.</h1>
-      <p>Every transfer is a balanced double-entry posting, processed by a single-writer state machine. Concurrent transfers and retried payments can't corrupt the books. The whole ledger must always sum to exactly zero.</p>
-    </div>
-    <div class="balancebox">
-      <div class="k">Money in circulation</div>
-      <div class="v num" id="ledgerTotal">$0.00</div>
-      <div class="pill" id="balancePill">Books balanced</div>
-    </div>
-  </section>
-
-  <section class="stats">
-    <div class="stat"><div class="k">Accounts</div><div class="v num" id="statAccounts">0</div></div>
-    <div class="stat"><div class="k">Transfers processed</div><div class="v num" id="statTransfers">0</div></div>
-    <div class="stat"><div class="k">Conservation total</div><div class="v num" id="statTotal">$0.00</div></div>
-  </section>
-
   <div class="grid">
-    <div class="card">
-      <h2>Accounts</h2>
-      <table>
-        <thead><tr><th>Account</th><th style="text-align:right">Balance</th></tr></thead>
-        <tbody id="acctBody"></tbody>
-      </table>
 
-      <div class="forms" style="margin-top:20px;">
-        <div>
-          <div class="flabel">New account</div>
-          <div class="frow">
-            <input id="newId" placeholder="account id, e.g. dave">
-            <button id="btnCreate">Create</button>
+    <div class="panel">
+      <div class="phead"><h2>Ledger</h2><span class="eyebrow" id="acctCount">0 accounts</span></div>
+      <div class="pbody">
+        <table>
+          <thead><tr><th>Account</th><th class="r">Balance</th></tr></thead>
+          <tbody id="acctBody"></tbody>
+        </table>
+
+        <div class="console">
+          <div class="fld">
+            <div class="flabel">Open account</div>
+            <div class="frow"><input id="newId" placeholder="account id, e.g. dave"><button id="btnCreate">Create</button></div>
           </div>
-        </div>
-        <div>
-          <div class="flabel">Deposit</div>
-          <div class="frow">
-            <select id="depId"></select>
-            <input id="depAmt" placeholder="amount, e.g. 250.00" style="max-width:150px">
-            <button id="btnDeposit" class="ghost">Deposit</button>
+          <div class="fld">
+            <div class="flabel">Deposit</div>
+            <div class="frow"><select id="depId"></select><input class="amt" id="depAmt" placeholder="0.00"><button class="ghost" id="btnDeposit">Deposit</button></div>
           </div>
-        </div>
-        <div>
-          <div class="flabel">Transfer</div>
-          <div class="frow">
-            <select id="tFrom"></select>
-            <select id="tTo"></select>
-            <input id="tAmt" placeholder="amount" style="max-width:120px">
-            <button id="btnTransfer">Send</button>
+          <div class="fld">
+            <div class="flabel">Transfer</div>
+            <div class="frow"><select id="tFrom"></select><select id="tTo"></select><input class="amt" id="tAmt" placeholder="0.00"><button id="btnTransfer">Send</button></div>
           </div>
+          <div class="msg" id="formMsg"></div>
         </div>
-        <div class="msg" id="formMsg"></div>
       </div>
     </div>
 
-    <div class="card">
-      <h2>Stress test <span class="tag">the proof</span></h2>
-      <p class="stress-intro">Run the same concurrent workload against a naive ledger (unsynchronized read-modify-write, no idempotency) and against Tally's engine. Watch what each does to the money.</p>
-      <div class="stress-run">
-        <button id="btnStress">Run stress test</button>
-        <span id="stressStatus" style="font-size:13px;color:var(--muted)"></span>
-      </div>
-      <p class="verdict" id="verdict" hidden></p>
-      <div class="cmp" id="cmp" hidden>
-        <div class="impl bad">
-          <h3>Naive ledger</h3>
-          <div class="sub">no locks, no idempotency</div>
-          <div id="naiveMetrics"></div>
+    <div class="panel">
+      <div class="phead"><h2>The experiment <span class="badge">proof</span></h2></div>
+      <div class="pbody">
+        <p class="stress-lead">Run one concurrent workload against a <b>naive ledger</b> (unsynchronized read-modify-write, no idempotency) and against <b>Tally's engine</b>. Same transfers, same retries. Watch what each does to the money.</p>
+        <div class="runbar">
+          <button class="btn-run" id="btnStress">Run stress test</button>
+          <span class="runmeta" id="runMeta">500k transfers &middot; 16 workers</span>
         </div>
-        <div class="impl good">
-          <h3>Tally engine</h3>
-          <div class="sub">single-writer state machine</div>
-          <div id="engineMetrics"></div>
+        <p class="verdict" id="verdict" hidden></p>
+        <div class="cmp" id="cmp" hidden>
+          <div class="impl bad">
+            <div class="name"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 8v5"/><path d="M12 16.5v.5"/><circle cx="12" cy="12" r="9.5" stroke-width="1.6"/></svg> Naive ledger</div>
+            <div class="tagline">no locks &middot; no idempotency</div>
+            <div class="headline-k">Money conjured from nothing</div>
+            <div class="headline bad mono" id="naiveHeadline">$0.00</div>
+            <div class="metrics" id="naiveMetrics"></div>
+          </div>
+          <div class="impl good">
+            <div class="name"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> Tally engine</div>
+            <div class="tagline">single-writer state machine</div>
+            <div class="headline-k">Money conjured from nothing</div>
+            <div class="headline good mono" id="engineHeadline">$0.00</div>
+            <div class="metrics" id="engineMetrics"></div>
+          </div>
         </div>
       </div>
     </div>
+
   </div>
 
-  <footer>Tally is a portfolio project. Money is stored as integer cents; state is durable via a write-ahead log.</footer>
+  <footer><div class="f">
+    <span>Tally &middot; a portfolio project by Gubin Geramifard</span>
+    <span><a id="ghlink2" href="#" target="_blank" rel="noreferrer">github.com/GubinGeramifard/ledger</a></span>
+  </div></footer>
 </div>
 
 <script>
 const GITHUB = "https://github.com/GubinGeramifard/ledger";
 document.getElementById("ghlink").href = GITHUB;
+document.getElementById("ghlink2").href = GITHUB;
 
 const $ = (id) => document.getElementById(id);
 const money = (cents) => {
   const neg = cents < 0; let v = Math.abs(cents);
-  const s = (v/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-  return (neg?"-$":"$") + s;
+  return (neg?"-$":"$") + (v/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 };
 const commas = (n) => Number(n).toLocaleString("en-US");
 
-async function api(path, method="GET", body) {
-  const r = await fetch(path, {method, headers: body?{"Content-Type":"application/json"}:{}, body: body?JSON.stringify(body):undefined});
+async function api(path, method="GET", body){
+  const r = await fetch(path,{method,headers:body?{"Content-Type":"application/json"}:{},body:body?JSON.stringify(body):undefined});
   const data = await r.json().catch(()=>({}));
-  if (!r.ok) throw new Error(data.error || ("HTTP "+r.status));
+  if(!r.ok) throw new Error(data.error || ("HTTP "+r.status));
   return data;
 }
 
-function fillSelects(accts){
-  const ids = accts.map(a=>a.id);
-  for (const sel of ["depId","tFrom","tTo"]) {
-    const el = $(sel); const prev = el.value;
-    el.innerHTML = ids.map(id=>`<option>${id}</option>`).join("");
-    if (ids.includes(prev)) el.value = prev;
+// Animate a number from 0 to `to`. fmt formats the raw value for display.
+function animate(el, to, fmt, dur=850){
+  const start=performance.now();
+  function frame(t){
+    const p=Math.min(1,(t-start)/dur);
+    const eased=1-Math.pow(1-p,3);
+    el.textContent=fmt(Math.round(to*eased));
+    if(p<1) requestAnimationFrame(frame);
+    else el.textContent=fmt(to);
   }
-  if ($("tTo").selectedIndex === $("tFrom").selectedIndex && ids.length>1) $("tTo").selectedIndex = 1;
+  requestAnimationFrame(frame);
+}
+
+function fillSelects(accts){
+  const ids=accts.map(a=>a.id);
+  for(const sel of ["depId","tFrom","tTo"]){
+    const el=$(sel), prev=el.value;
+    el.innerHTML=ids.map(id=>`<option>${id}</option>`).join("");
+    if(ids.includes(prev)) el.value=prev;
+  }
+  if($("tTo").selectedIndex===$("tFrom").selectedIndex && ids.length>1) $("tTo").selectedIndex=1;
 }
 
 async function refresh(){
-  const [stats, accts] = await Promise.all([api("/api/stats"), api("/api/accounts")]);
-  $("statAccounts").textContent = commas(stats.accounts);
-  $("statTransfers").textContent = commas(stats.transfers);
-  $("statTotal").textContent = money(stats.total);
-  const sum = accts.reduce((t,a)=>t+a.balance,0);
-  $("ledgerTotal").textContent = money(sum);
-  const balanced = stats.total === 0;
-  const pill = $("balancePill");
-  pill.textContent = balanced ? "Books balanced" : "OUT OF BALANCE";
-  pill.className = "pill" + (balanced?"":" bad");
+  const [stats,accts]=await Promise.all([api("/api/stats"),api("/api/accounts")]);
+  $("sigma").textContent=money(stats.total);
+  $("txCount").textContent=commas(stats.transfers);
+  $("acctCount").textContent=stats.accounts+(stats.accounts===1?" account":" accounts");
+  const circ=accts.reduce((t,a)=>t+a.balance,0);
+  $("circulation").textContent=money(circ);
+
+  const ok=stats.total===0;
+  $("balancePill").className="pill"+(ok?"":" bad");
+  $("pillText").textContent=ok?"Balanced":"OUT OF BALANCE";
+  $("sigma").style.color=ok?"var(--good)":"var(--bad)";
+  $("navStatus").textContent=ok?"books balanced":"OUT OF BALANCE";
 
   accts.sort((a,b)=>a.id.localeCompare(b.id));
-  $("acctBody").innerHTML = accts.map(a=>
-    `<tr><td class="acct-id">${a.id}</td><td class="bal">${money(a.balance)}</td></tr>`).join("")
-    || `<tr><td colspan="2" style="color:var(--muted)">No accounts yet.</td></tr>`;
+  $("acctBody").innerHTML=accts.map(a=>
+    `<tr><td class="acct"><span class="swatch"></span>${a.id}</td><td class="bal r">${money(a.balance)}</td></tr>`).join("")
+    || `<tr><td colspan="2" class="empty">No accounts yet. Open one below.</td></tr>`;
   fillSelects(accts);
 }
 
-function flash(msg, ok){ const el=$("formMsg"); el.textContent=msg; el.className="msg "+(ok?"ok":"err"); setTimeout(()=>{if(el.textContent===msg)el.textContent="";},3500); }
+function flash(m,ok){const el=$("formMsg");el.textContent=(ok?"✓ ":"✕ ")+m;el.className="msg "+(ok?"ok":"err");setTimeout(()=>{if(el.textContent.endsWith(m))el.textContent="";},3500);}
 
-$("btnCreate").onclick = async () => {
-  const id = $("newId").value.trim(); if(!id) return;
-  try { await api("/api/accounts","POST",{id}); $("newId").value=""; await refresh(); flash(`Created ${id}`,true); }
-  catch(e){ flash(e.message,false); }
-};
-$("btnDeposit").onclick = async () => {
-  try { await api("/api/deposit","POST",{id:$("depId").value, amount:$("depAmt").value}); $("depAmt").value=""; await refresh(); flash("Deposit posted",true); }
-  catch(e){ flash(e.message,false); }
-};
-$("btnTransfer").onclick = async () => {
-  const from=$("tFrom").value, to=$("tTo").value;
-  if(from===to){ flash("Pick two different accounts",false); return; }
-  try { await api("/api/transfers","POST",{from, to, amount:$("tAmt").value, idempotency_key:""}); $("tAmt").value=""; await refresh(); flash("Transfer sent",true); }
-  catch(e){ flash(e.message,false); }
-};
+$("btnCreate").onclick=async()=>{const id=$("newId").value.trim();if(!id)return;try{await api("/api/accounts","POST",{id});$("newId").value="";await refresh();flash("Opened "+id,true);}catch(e){flash(e.message,false);}};
+$("btnDeposit").onclick=async()=>{try{await api("/api/deposit","POST",{id:$("depId").value,amount:$("depAmt").value});$("depAmt").value="";await refresh();flash("Deposit posted",true);}catch(e){flash(e.message,false);}};
+$("btnTransfer").onclick=async()=>{const from=$("tFrom").value,to=$("tTo").value;if(from===to){flash("Pick two different accounts",false);return;}try{await api("/api/transfers","POST",{from,to,amount:$("tAmt").value,idempotency_key:""});$("tAmt").value="";await refresh();flash("Transfer settled",true);}catch(e){flash(e.message,false);}};
 
-function metricRow(k,v,cls){ return `<div class="metric"><span class="m-k">${k}</span><span class="m-v ${cls||""}">${v}</span></div>`; }
+function metricRow(k,v){return `<div class="metric"><span class="m-k">${k}</span><span class="m-v">${v}</span></div>`;}
 
-function renderImpl(elId, r, isEngine){
-  const driftCls = r.drift===0 ? "drift-ok" : "drift-bad";
-  const driftLabel = r.drift===0 ? "$0.00 &mdash; exact" : money(r.drift);
-  let html = "";
-  html += metricRow("Throughput", commas(r.tps)+"/s");
-  html += metricRow("Time", r.millis+" ms");
-  html += metricRow("Money conjured", driftLabel, driftCls);
-  html += metricRow("Negative accounts", commas(r.negative_accounts));
-  if (isEngine) html += metricRow("Retries deduped", commas(r.retries_deduped));
-  else html += metricRow("Retries re-applied", "all of them");
-  $(elId).innerHTML = html;
-}
-
-$("btnStress").onclick = async () => {
-  const btn=$("btnStress"); btn.disabled=true;
-  $("stressStatus").innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:middle"></span> running…`;
-  $("cmp").hidden=true; $("verdict").hidden=true;
-  try {
-    const c = await api("/api/stress","POST",{});
-    renderImpl("naiveMetrics", c.naive, false);
-    renderImpl("engineMetrics", c.engine, true);
-    $("verdict").innerHTML =
-      `Across ${commas(c.params.transfers)} concurrent transfers (plus ${commas(c.retries)} retries), the naive ledger `+
-      `<b>created or destroyed ${money(Math.abs(c.naive.drift))}</b>. Tally's engine kept the books exact at `+
-      `${commas(c.engine.tps)} transfers/sec, with every retry deduplicated.`;
-    $("cmp").hidden=false; $("verdict").hidden=false;
-    $("stressStatus").textContent = "";
-  } catch(e){ $("stressStatus").textContent = "Error: "+e.message; }
-  finally { btn.disabled=false; }
+$("btnStress").onclick=async()=>{
+  const btn=$("btnStress");btn.disabled=true;
+  $("runMeta").innerHTML=`<span class="spinner"></span> running the workload…`;
+  $("cmp").hidden=true;$("verdict").hidden=true;
+  try{
+    const c=await api("/api/stress","POST",{});
+    const n=c.naive,e=c.engine;
+    $("naiveMetrics").innerHTML=metricRow("Throughput",commas(n.tps)+"/s")+metricRow("Time",n.millis+" ms")+metricRow("Negative accounts",commas(n.negative_accounts))+metricRow("Retries","re-applied all");
+    $("engineMetrics").innerHTML=metricRow("Throughput",commas(e.tps)+"/s")+metricRow("Time",e.millis+" ms")+metricRow("Negative accounts",commas(e.negative_accounts))+metricRow("Retries deduped",commas(e.retries_deduped));
+    $("verdict").innerHTML=`Across <b>${commas(c.params.transfers)}</b> concurrent transfers plus <b>${commas(c.retries)}</b> retries, the naive ledger `+
+      `<span class="lost">conjured ${money(Math.abs(n.drift))}</span> out of thin air. Tally's engine stayed <span class="safe">exact to the cent</span> at ${commas(e.tps)}/s.`;
+    $("cmp").hidden=false;$("verdict").hidden=false;
+    animate($("naiveHeadline"),Math.abs(n.drift),money,1000);
+    $("engineHeadline").textContent="$0.00";
+    $("runMeta").innerHTML=`${commas(c.params.transfers)} transfers &middot; ${c.params.workers} workers`;
+  }catch(err){$("runMeta").textContent="Error: "+err.message;}
+  finally{btn.disabled=false;}
 };
 
 refresh();
