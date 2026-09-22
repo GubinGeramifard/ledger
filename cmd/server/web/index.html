@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tally — a ledger that always balances</title>
+<style>
+  :root{
+    --bg:#f6f8fa; --panel:#ffffff; --ink:#0f1729; --muted:#5b6577; --line:#e6e9ef;
+    --brand:#059669; --brand-2:#0ea5e9; --brand-soft:rgba(5,150,105,.09);
+    --danger:#dc2626; --danger-soft:rgba(220,38,38,.08);
+    --mono:ui-monospace,SFMono-Regular,Menlo,"Cascadia Code",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --radius:14px; --shadow:0 12px 34px -18px rgba(15,23,41,.28);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:
+      radial-gradient(680px 400px at 100% -6%,rgba(14,165,233,.08),transparent 60%),
+      radial-gradient(620px 380px at -6% 0%,rgba(5,150,105,.10),transparent 58%),var(--bg);
+    color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;line-height:1.5;}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px;}
+  a{color:inherit;}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;}
+
+  header.top{display:flex;align-items:center;justify-content:space-between;padding:20px 0 8px;}
+  .brand{display:flex;align-items:center;gap:11px;}
+  .logo{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;color:#fff;font-size:19px;
+    background:linear-gradient(140deg,var(--brand),var(--brand-2));box-shadow:0 8px 18px -8px rgba(5,150,105,.7);}
+  .brand b{font-size:19px;letter-spacing:-.02em;}
+  .brand span{display:block;font-size:12px;color:var(--muted);margin-top:-2px;}
+  .gh{font-size:13px;color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:9px;padding:8px 12px;background:var(--panel);}
+  .gh:hover{color:var(--ink);border-color:#cfd4de;}
+
+  .hero{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);
+    padding:22px 24px;margin:14px 0 22px;display:flex;flex-wrap:wrap;gap:20px;align-items:center;justify-content:space-between;}
+  .hero .lead{max-width:52ch;}
+  .hero h1{font-size:clamp(1.3rem,3vw,1.7rem);letter-spacing:-.02em;margin:0 0 6px;}
+  .hero p{margin:0;color:var(--muted);font-size:14.5px;}
+  .balancebox{text-align:right;}
+  .balancebox .k{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);}
+  .balancebox .v{font-family:var(--mono);font-size:clamp(1.6rem,4vw,2.2rem);font-weight:600;letter-spacing:-.02em;}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--brand);
+    background:var(--brand-soft);border-radius:999px;padding:5px 11px;margin-top:6px;}
+  .pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--brand);}
+  .pill.bad{color:var(--danger);background:var(--danger-soft);}
+  .pill.bad::before{background:var(--danger);}
+
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px;}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px 17px;}
+  .stat .k{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
+  .stat .v{font-family:var(--mono);font-size:1.5rem;font-weight:600;margin-top:5px;letter-spacing:-.01em;}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start;}
+  @media (max-width:820px){.grid{grid-template-columns:1fr;}.stats{grid-template-columns:1fr;}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;}
+  .card h2{font-size:15px;letter-spacing:-.01em;margin:0 0 14px;display:flex;align-items:center;gap:8px;}
+  .card h2 .tag{font-size:11px;font-weight:600;color:var(--brand);background:var(--brand-soft);border-radius:999px;padding:3px 9px;letter-spacing:.03em;}
+
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th{text-align:left;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:0 0 8px;}
+  td{padding:9px 0;border-top:1px solid var(--line);}
+  td.bal{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;}
+  .acct-id{font-weight:600;}
+
+  .forms{display:flex;flex-direction:column;gap:16px;}
+  .frow{display:flex;gap:8px;flex-wrap:wrap;}
+  input,select{font-family:inherit;font-size:14px;color:var(--ink);background:#fff;border:1px solid var(--line);
+    border-radius:9px;padding:9px 11px;outline:none;min-width:0;}
+  input:focus,select:focus{border-color:var(--brand);}
+  input{flex:1;}
+  .flabel{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:7px;}
+  button{font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;border:0;border-radius:9px;padding:9px 15px;
+    color:#fff;background:linear-gradient(140deg,var(--brand),var(--brand-2));transition:transform .12s,opacity .12s;}
+  button:hover:not(:disabled){transform:translateY(-1px);}
+  button:disabled{opacity:.55;cursor:default;}
+  button.ghost{color:var(--ink);background:#fff;border:1px solid var(--line);}
+  .msg{font-size:13px;margin-top:6px;min-height:18px;}
+  .msg.ok{color:var(--brand);} .msg.err{color:var(--danger);}
+
+  /* Stress test */
+  .stress-intro{color:var(--muted);font-size:13.5px;margin:0 0 14px;}
+  .stress-run{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+  .verdict{font-size:14px;line-height:1.55;margin:0 0 16px;padding:12px 14px;border-radius:10px;background:var(--brand-soft);color:#065f46;}
+  .verdict b{color:var(--danger);}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+  @media (max-width:520px){.cmp{grid-template-columns:1fr;}}
+  .impl{border:1px solid var(--line);border-radius:12px;padding:15px;}
+  .impl.good{border-color:rgba(5,150,105,.4);background:var(--brand-soft);}
+  .impl.bad{border-color:rgba(220,38,38,.35);background:var(--danger-soft);}
+  .impl h3{margin:0 0 4px;font-size:14px;}
+  .impl .sub{font-size:12px;color:var(--muted);margin-bottom:12px;}
+  .metric{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-top:1px dashed var(--line);}
+  .metric:first-of-type{border-top:0;}
+  .metric .m-k{font-size:12.5px;color:var(--muted);}
+  .metric .m-v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:600;}
+  .m-v.drift-bad{color:var(--danger);} .m-v.drift-ok{color:var(--brand);}
+  .spinner{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--brand);border-radius:50%;animation:spin .7s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  footer{color:var(--muted);font-size:12.5px;text-align:center;padding:34px 0 40px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="logo">&#9878;</div>
+      <div><b>Tally</b><span>double-entry ledger engine</span></div>
+    </div>
+    <a class="gh" id="ghlink" href="#" target="_blank" rel="noreferrer">View on GitHub</a>
+  </header>
+
+  <section class="hero">
+    <div class="lead">
+      <h1>A ledger that can't lose your money.</h1>
+      <p>Every transfer is a balanced double-entry posting, processed by a single-writer state machine. Concurrent transfers and retried payments can't corrupt the books. The whole ledger must always sum to exactly zero.</p>
+    </div>
+    <div class="balancebox">
+      <div class="k">Money in circulation</div>
+      <div class="v num" id="ledgerTotal">$0.00</div>
+      <div class="pill" id="balancePill">Books balanced</div>
+    </div>
+  </section>
+
+  <section class="stats">
+    <div class="stat"><div class="k">Accounts</div><div class="v num" id="statAccounts">0</div></div>
+    <div class="stat"><div class="k">Transfers processed</div><div class="v num" id="statTransfers">0</div></div>
+    <div class="stat"><div class="k">Conservation total</div><div class="v num" id="statTotal">$0.00</div></div>
+  </section>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Accounts</h2>
+      <table>
+        <thead><tr><th>Account</th><th style="text-align:right">Balance</th></tr></thead>
+        <tbody id="acctBody"></tbody>
+      </table>
+
+      <div class="forms" style="margin-top:20px;">
+        <div>
+          <div class="flabel">New account</div>
+          <div class="frow">
+            <input id="newId" placeholder="account id, e.g. dave">
+            <button id="btnCreate">Create</button>
+          </div>
+        </div>
+        <div>
+          <div class="flabel">Deposit</div>
+          <div class="frow">
+            <select id="depId"></select>
+            <input id="depAmt" placeholder="amount, e.g. 250.00" style="max-width:150px">
+            <button id="btnDeposit" class="ghost">Deposit</button>
+          </div>
+        </div>
+        <div>
+          <div class="flabel">Transfer</div>
+          <div class="frow">
+            <select id="tFrom"></select>
+            <select id="tTo"></select>
+            <input id="tAmt" placeholder="amount" style="max-width:120px">
+            <button id="btnTransfer">Send</button>
+          </div>
+        </div>
+        <div class="msg" id="formMsg"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Stress test <span class="tag">the proof</span></h2>
+      <p class="stress-intro">Run the same concurrent workload against a naive ledger (unsynchronized read-modify-write, no idempotency) and against Tally's engine. Watch what each does to the money.</p>
+      <div class="stress-run">
+        <button id="btnStress">Run stress test</button>
+        <span id="stressStatus" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+      <p class="verdict" id="verdict" hidden></p>
+      <div class="cmp" id="cmp" hidden>
+        <div class="impl bad">
+          <h3>Naive ledger</h3>
+          <div class="sub">no locks, no idempotency</div>
+          <div id="naiveMetrics"></div>
+        </div>
+        <div class="impl good">
+          <h3>Tally engine</h3>
+          <div class="sub">single-writer state machine</div>
+          <div id="engineMetrics"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>Tally is a portfolio project. Money is stored as integer cents; state is durable via a write-ahead log.</footer>
+</div>
+
+<script>
+const GITHUB = "https://github.com/GubinGeramifard/ledger";
+document.getElementById("ghlink").href = GITHUB;
+
+const $ = (id) => document.getElementById(id);
+const money = (cents) => {
+  const neg = cents < 0; let v = Math.abs(cents);
+  const s = (v/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  return (neg?"-$":"$") + s;
+};
+const commas = (n) => Number(n).toLocaleString("en-US");
+
+async function api(path, method="GET", body) {
+  const r = await fetch(path, {method, headers: body?{"Content-Type":"application/json"}:{}, body: body?JSON.stringify(body):undefined});
+  const data = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(data.error || ("HTTP "+r.status));
+  return data;
+}
+
+function fillSelects(accts){
+  const ids = accts.map(a=>a.id);
+  for (const sel of ["depId","tFrom","tTo"]) {
+    const el = $(sel); const prev = el.value;
+    el.innerHTML = ids.map(id=>`<option>${id}</option>`).join("");
+    if (ids.includes(prev)) el.value = prev;
+  }
+  if ($("tTo").selectedIndex === $("tFrom").selectedIndex && ids.length>1) $("tTo").selectedIndex = 1;
+}
+
+async function refresh(){
+  const [stats, accts] = await Promise.all([api("/api/stats"), api("/api/accounts")]);
+  $("statAccounts").textContent = commas(stats.accounts);
+  $("statTransfers").textContent = commas(stats.transfers);
+  $("statTotal").textContent = money(stats.total);
+  const sum = accts.reduce((t,a)=>t+a.balance,0);
+  $("ledgerTotal").textContent = money(sum);
+  const balanced = stats.total === 0;
+  const pill = $("balancePill");
+  pill.textContent = balanced ? "Books balanced" : "OUT OF BALANCE";
+  pill.className = "pill" + (balanced?"":" bad");
+
+  accts.sort((a,b)=>a.id.localeCompare(b.id));
+  $("acctBody").innerHTML = accts.map(a=>
+    `<tr><td class="acct-id">${a.id}</td><td class="bal">${money(a.balance)}</td></tr>`).join("")
+    || `<tr><td colspan="2" style="color:var(--muted)">No accounts yet.</td></tr>`;
+  fillSelects(accts);
+}
+
+function flash(msg, ok){ const el=$("formMsg"); el.textContent=msg; el.className="msg "+(ok?"ok":"err"); setTimeout(()=>{if(el.textContent===msg)el.textContent="";},3500); }
+
+$("btnCreate").onclick = async () => {
+  const id = $("newId").value.trim(); if(!id) return;
+  try { await api("/api/accounts","POST",{id}); $("newId").value=""; await refresh(); flash(`Created ${id}`,true); }
+  catch(e){ flash(e.message,false); }
+};
+$("btnDeposit").onclick = async () => {
+  try { await api("/api/deposit","POST",{id:$("depId").value, amount:$("depAmt").value}); $("depAmt").value=""; await refresh(); flash("Deposit posted",true); }
+  catch(e){ flash(e.message,false); }
+};
+$("btnTransfer").onclick = async () => {
+  const from=$("tFrom").value, to=$("tTo").value;
+  if(from===to){ flash("Pick two different accounts",false); return; }
+  try { await api("/api/transfers","POST",{from, to, amount:$("tAmt").value, idempotency_key:""}); $("tAmt").value=""; await refresh(); flash("Transfer sent",true); }
+  catch(e){ flash(e.message,false); }
+};
+
+function metricRow(k,v,cls){ return `<div class="metric"><span class="m-k">${k}</span><span class="m-v ${cls||""}">${v}</span></div>`; }
+
+function renderImpl(elId, r, isEngine){
+  const driftCls = r.drift===0 ? "drift-ok" : "drift-bad";
+  const driftLabel = r.drift===0 ? "$0.00 &mdash; exact" : money(r.drift);
+  let html = "";
+  html += metricRow("Throughput", commas(r.tps)+"/s");
+  html += metricRow("Time", r.millis+" ms");
+  html += metricRow("Money conjured", driftLabel, driftCls);
+  html += metricRow("Negative accounts", commas(r.negative_accounts));
+  if (isEngine) html += metricRow("Retries deduped", commas(r.retries_deduped));
+  else html += metricRow("Retries re-applied", "all of them");
+  $(elId).innerHTML = html;
+}
+
+$("btnStress").onclick = async () => {
+  const btn=$("btnStress"); btn.disabled=true;
+  $("stressStatus").innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:middle"></span> running…`;
+  $("cmp").hidden=true; $("verdict").hidden=true;
+  try {
+    const c = await api("/api/stress","POST",{});
+    renderImpl("naiveMetrics", c.naive, false);
+    renderImpl("engineMetrics", c.engine, true);
+    $("verdict").innerHTML =
+      `Across ${commas(c.params.transfers)} concurrent transfers (plus ${commas(c.retries)} retries), the naive ledger `+
+      `<b>created or destroyed ${money(Math.abs(c.naive.drift))}</b>. Tally's engine kept the books exact at `+
+      `${commas(c.engine.tps)} transfers/sec, with every retry deduplicated.`;
+    $("cmp").hidden=false; $("verdict").hidden=false;
+    $("stressStatus").textContent = "";
+  } catch(e){ $("stressStatus").textContent = "Error: "+e.message; }
+  finally { btn.disabled=false; }
+};
+
+refresh();
+</script>
+</body>
+</html>

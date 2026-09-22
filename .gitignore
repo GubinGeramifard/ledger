@@ -1,0 +1,10 @@
+# Write-ahead logs (runtime state)
+*.wal
+
+# Binaries
+/server
+/bench
+*.exe
+
+# Go
+/bin/
