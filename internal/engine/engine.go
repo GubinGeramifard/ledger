@@ -21,6 +21,8 @@
 // destroyed by a bug.
 package engine
 
+import "sync"
+
 // ExternalAccount is the counterparty for deposits and withdrawals. It holds
 // the negative mirror of all money that has entered user accounts, which keeps
 // the ledger-wide balance at exactly zero.
@@ -85,15 +87,22 @@ func (e *Engine) loop() {
 	}
 }
 
+// donePool recycles the reply channels used by submit so that a hot path of
+// millions of calls does not allocate one channel per call. The channels are
+// buffered (size 1) and signaled with a send rather than a close, so they can be
+// reused instead of thrown away.
+var donePool = sync.Pool{New: func() any { return make(chan struct{}, 1) }}
+
 // submit runs fn on the run loop and waits for it to finish, giving callers a
 // synchronous API over the serialized state.
 func (e *Engine) submit(fn func()) {
-	done := make(chan struct{})
+	done := donePool.Get().(chan struct{})
 	e.ops <- func() {
 		fn()
-		close(done)
+		done <- struct{}{}
 	}
 	<-done
+	donePool.Put(done)
 }
 
 // Close stops the run loop and closes the log, if any.
@@ -106,6 +115,20 @@ func (e *Engine) Close() error {
 	})
 	close(e.quit)
 	return err
+}
+
+// simulateCrash models an abrupt process death: it stops the run loop and
+// releases the log's file handle without a clean flush. With fsync enabled every
+// acknowledged transfer is already on disk, so recovery must reproduce them all.
+// Used by the crash-recovery tests.
+func (e *Engine) simulateCrash() {
+	e.submit(func() {
+		if e.wal != nil {
+			_ = e.wal.crashClose()
+			e.wal = nil
+		}
+	})
+	close(e.quit)
 }
 
 // CreateAccount adds a new zero-balance account.

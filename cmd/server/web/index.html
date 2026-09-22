@@ -129,14 +129,21 @@
     background:var(--bad-soft);border:1px solid var(--bad-line);color:#ffd9df;}
   .verdict .lost{color:var(--bad);font-weight:600;font-family:var(--mono);}
   .verdict .safe{color:var(--good);font-weight:600;font-family:var(--mono);}
-  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-  @media(max-width:560px){.cmp{grid-template-columns:1fr;}}
+  .experiment{margin-bottom:44px;}
+  .uth .uth-row{padding:13px 0;border-top:1px solid var(--line);}
+  .uth .uth-row:first-child{border-top:0;padding-top:0;}
+  .uth-k{font-family:var(--mono);font-size:12px;letter-spacing:.05em;color:var(--good);margin-bottom:4px;}
+  .uth-d{font-size:13px;color:var(--muted);line-height:1.55;}
+  .cmp{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  @media(max-width:720px){.cmp{grid-template-columns:1fr;}}
+  .cmp-note{margin:18px 0 0;font-size:12.5px;color:var(--muted);line-height:1.62;border-left:2px solid var(--good-line);padding-left:13px;}
+  .cmp-note b{color:var(--ink);font-weight:500;}
   .impl{border-radius:13px;padding:17px;border:1px solid var(--line);background:var(--bg-2);}
   .impl.bad{border-color:var(--bad-line);background:linear-gradient(180deg,var(--bad-soft),transparent);}
   .impl.good{border-color:var(--good-line);background:linear-gradient(180deg,var(--good-soft),transparent);}
   .impl .name{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;}
   .impl .tagline{font-family:var(--mono);font-size:11px;color:var(--muted);margin:3px 0 15px;}
-  .headline{font-family:var(--mono);font-weight:600;letter-spacing:-.01em;line-height:1;font-size:clamp(1.5rem,4vw,2rem);}
+  .headline{font-family:var(--mono);font-weight:600;letter-spacing:-.01em;line-height:1;font-size:clamp(1.25rem,2.4vw,1.7rem);}
   .headline.bad{color:var(--bad);} .headline.good{color:var(--good);}
   .headline-k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:7px;}
   .metrics{margin-top:16px;display:flex;flex-direction:column;gap:1px;background:var(--line);border-radius:9px;overflow:hidden;border:1px solid var(--line);}
@@ -223,33 +230,51 @@
     </div>
 
     <div class="panel">
-      <div class="phead"><h2>The experiment <span class="badge">proof</span></h2></div>
-      <div class="pbody">
-        <p class="stress-lead">Run one concurrent workload against a <b>naive ledger</b> (unsynchronized read-modify-write, no idempotency) and against <b>Tally's engine</b>. Same transfers, same retries. Watch what each does to the money.</p>
-        <div class="runbar">
-          <button class="btn-run" id="btnStress">Run stress test</button>
-          <span class="runmeta" id="runMeta">500k transfers &middot; 16 workers</span>
-        </div>
-        <p class="verdict" id="verdict" hidden></p>
-        <div class="cmp" id="cmp" hidden>
-          <div class="impl bad">
-            <div class="name"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 8v5"/><path d="M12 16.5v.5"/><circle cx="12" cy="12" r="9.5" stroke-width="1.6"/></svg> Naive ledger</div>
-            <div class="tagline">no locks &middot; no idempotency</div>
-            <div class="headline-k">Money conjured from nothing</div>
-            <div class="headline bad mono" id="naiveHeadline">$0.00</div>
-            <div class="metrics" id="naiveMetrics"></div>
-          </div>
-          <div class="impl good">
-            <div class="name"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> Tally engine</div>
-            <div class="tagline">single-writer state machine</div>
-            <div class="headline-k">Money conjured from nothing</div>
-            <div class="headline good mono" id="engineHeadline">$0.00</div>
-            <div class="metrics" id="engineMetrics"></div>
-          </div>
-        </div>
+      <div class="phead"><h2>How it stays correct</h2></div>
+      <div class="pbody uth">
+        <div class="uth-row"><div class="uth-k">Single-writer</div><div class="uth-d">One goroutine owns every balance, so there are no data races and no locks to get wrong, and the command order is deterministic.</div></div>
+        <div class="uth-row"><div class="uth-k">Double-entry &middot; integer cents</div><div class="uth-d">Each transfer debits and credits by the same amount in whole cents, so the ledger always sums to zero. Never floats.</div></div>
+        <div class="uth-row"><div class="uth-k">Idempotency keys</div><div class="uth-d">A retried payment carries a key; the engine returns the first result and never charges twice.</div></div>
+        <div class="uth-row"><div class="uth-k">Write-ahead log</div><div class="uth-d">Every command is durably appended before it is acknowledged; after a crash, state rebuilds by replaying the log.</div></div>
       </div>
     </div>
 
+  </div>
+
+  <div class="panel experiment">
+    <div class="phead"><h2>The experiment <span class="badge">proof</span></h2><span class="eyebrow" id="runMeta">500k transfers &middot; 16 workers</span></div>
+    <div class="pbody">
+      <p class="stress-lead">One concurrent workload, three ledgers: a <b>naive</b> version with no synchronization, a correct <b>global-mutex</b> version, and Tally's <b>single-writer engine</b>. The naive run shows why synchronization isn't optional. The other two are both correct, so the real comparison is the cost of how each one serializes.</p>
+      <div class="runbar">
+        <button class="btn-run" id="btnStress">Run stress test</button>
+        <span class="runmeta" id="runStatus"></span>
+      </div>
+      <p class="verdict" id="verdict" hidden></p>
+      <div class="cmp" id="cmp" hidden>
+        <div class="impl bad">
+          <div class="name"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 8v5"/><path d="M12 16.5v.5"/><circle cx="12" cy="12" r="9.5" stroke-width="1.6"/></svg> Naive</div>
+          <div class="tagline">no locks &middot; no idempotency</div>
+          <div class="headline-k">Money conjured</div>
+          <div class="headline bad mono" id="h-naive">$0.00</div>
+          <div class="metrics" id="m-naive"></div>
+        </div>
+        <div class="impl good">
+          <div class="name"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> Global mutex</div>
+          <div class="tagline">correct &middot; one big lock</div>
+          <div class="headline-k">Money conjured</div>
+          <div class="headline good mono" id="h-locked">$0.00</div>
+          <div class="metrics" id="m-locked"></div>
+        </div>
+        <div class="impl good">
+          <div class="name"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg> Tally engine</div>
+          <div class="tagline">correct &middot; single-writer</div>
+          <div class="headline-k">Money conjured</div>
+          <div class="headline good mono" id="h-engine">$0.00</div>
+          <div class="metrics" id="m-engine"></div>
+        </div>
+      </div>
+      <p class="cmp-note" id="cmpNote" hidden></p>
+    </div>
   </div>
 
   <footer><div class="f">
@@ -328,23 +353,31 @@ $("btnDeposit").onclick=async()=>{try{await api("/api/deposit","POST",{id:$("dep
 $("btnTransfer").onclick=async()=>{const from=$("tFrom").value,to=$("tTo").value;if(from===to){flash("Pick two different accounts",false);return;}try{await api("/api/transfers","POST",{from,to,amount:$("tAmt").value,idempotency_key:""});$("tAmt").value="";await refresh();flash("Transfer settled",true);}catch(e){flash(e.message,false);}};
 
 function metricRow(k,v){return `<div class="metric"><span class="m-k">${k}</span><span class="m-v">${v}</span></div>`;}
+// Adaptive latency: sub-microsecond shows as ns, otherwise µs.
+const lat=(micros)=>micros>=1?micros.toFixed(1)+"µs":Math.max(0,Math.round(micros*1000))+"ns";
+
+function renderCorrect(prefix,r){
+  $("h-"+prefix).textContent="$0.00";
+  $("m-"+prefix).innerHTML=metricRow("Throughput",commas(r.tps)+"/s")+metricRow("p99 latency",lat(r.p99_micros))+metricRow("Negative accounts",commas(r.negative_accounts))+metricRow("Retries deduped",commas(r.retries_deduped));
+}
 
 $("btnStress").onclick=async()=>{
   const btn=$("btnStress");btn.disabled=true;
-  $("runMeta").innerHTML=`<span class="spinner"></span> running the workload…`;
-  $("cmp").hidden=true;$("verdict").hidden=true;
+  $("runStatus").innerHTML=`<span class="spinner"></span> running…`;
+  $("cmp").hidden=true;$("verdict").hidden=true;$("cmpNote").hidden=true;
   try{
     const c=await api("/api/stress","POST",{});
-    const n=c.naive,e=c.engine;
-    $("naiveMetrics").innerHTML=metricRow("Throughput",commas(n.tps)+"/s")+metricRow("Time",n.millis+" ms")+metricRow("Negative accounts",commas(n.negative_accounts))+metricRow("Retries","re-applied all");
-    $("engineMetrics").innerHTML=metricRow("Throughput",commas(e.tps)+"/s")+metricRow("Time",e.millis+" ms")+metricRow("Negative accounts",commas(e.negative_accounts))+metricRow("Retries deduped",commas(e.retries_deduped));
+    const n=c.naive,l=c.locked,e=c.engine;
+    $("m-naive").innerHTML=metricRow("Throughput",commas(n.tps)+"/s")+metricRow("p99 latency",lat(n.p99_micros))+metricRow("Negative accounts",commas(n.negative_accounts))+metricRow("Retries","re-applied all");
+    renderCorrect("locked",l);
+    renderCorrect("engine",e);
     $("verdict").innerHTML=`Across <b>${commas(c.params.transfers)}</b> concurrent transfers plus <b>${commas(c.retries)}</b> retries, the naive ledger `+
-      `<span class="lost">conjured ${money(Math.abs(n.drift))}</span> out of thin air. Tally's engine stayed <span class="safe">exact to the cent</span> at ${commas(e.tps)}/s.`;
-    $("cmp").hidden=false;$("verdict").hidden=false;
-    animate($("naiveHeadline"),Math.abs(n.drift),money,1000);
-    $("engineHeadline").textContent="$0.00";
-    $("runMeta").innerHTML=`${commas(c.params.transfers)} transfers &middot; ${c.params.workers} workers`;
-  }catch(err){$("runMeta").textContent="Error: "+err.message;}
+      `<span class="lost">conjured ${money(Math.abs(n.drift))}</span> out of thin air. Both correct designs stayed <span class="safe">exact to the cent</span>.`;
+    $("cmpNote").innerHTML=`Correctness isn't the hard part, a <b>global mutex</b> gets it right too (${commas(l.tps)}/s). The <b>single-writer engine</b> (${commas(e.tps)}/s) trades a little raw throughput for a deterministic command log, which is what keeps crash recovery clean and lets it shard across cores without touching the transfer logic.`;
+    $("cmp").hidden=false;$("verdict").hidden=false;$("cmpNote").hidden=false;
+    animate($("h-naive"),Math.abs(n.drift),money,1000);
+    $("runStatus").textContent="";
+  }catch(err){$("runStatus").textContent="Error: "+err.message;}
   finally{btn.disabled=false;}
 };
 

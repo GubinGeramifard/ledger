@@ -1,17 +1,31 @@
-// Package bench runs the same concurrent transfer workload against the naive
-// ledger and the engine and reports what each did to the money. It is shared by
-// the command-line benchmark and the dashboard's "stress test" button so both
-// measure exactly the same thing.
+// Package bench runs one concurrent transfer workload against three ledger
+// implementations and reports what each did to the money and how fast.
+//
+//   - naive:  no synchronization, no idempotency. Fast, but loses money.
+//   - locked: correct, but every operation serializes on one global mutex.
+//   - engine: correct, via a single-writer state machine.
+//
+// The naive run shows why synchronization is not optional. The locked-vs-engine
+// comparison is the honest one: two correct designs, measured on throughput and
+// tail latency.
+//
+// The workload isolates correctness under concurrency: every account starts with
+// a balance so large that no transfer is ever legitimately rejected, so any
+// change in the total is money created or destroyed by a race, not a business
+// rule. A fraction of the operations are exact duplicates (simulated retries) to
+// exercise idempotency.
 package bench
 
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/GubinGeramifard/ledger/internal/engine"
+	"github.com/GubinGeramifard/ledger/internal/locked"
 	"github.com/GubinGeramifard/ledger/internal/naive"
 )
 
@@ -24,13 +38,12 @@ type Params struct {
 	SeedBalance engine.Money `json:"seed_balance"`
 }
 
-// Default returns a workload sized to run in well under a second while still
-// making the naive ledger lose a large, obvious amount of money.
+// Default returns a workload sized to run quickly while still making the naive
+// ledger lose a large, obvious amount of money.
 func Default() Params {
 	return Params{Accounts: 20, Transfers: 500000, Workers: 16, DupFrac: 0.05, SeedBalance: 100_000_000_00}
 }
 
-// clamp keeps user-supplied params (from the web endpoint) in a safe range.
 func (p Params) clamp() Params {
 	if p.Accounts < 2 {
 		p.Accounts = 2
@@ -64,13 +77,16 @@ func (p Params) clamp() Params {
 
 // Result is the outcome for one implementation.
 type Result struct {
-	Millis   int64        `json:"millis"`
-	TPS      int64        `json:"tps"`
-	Total    engine.Money `json:"total"`
-	Drift    engine.Money `json:"drift"` // final total minus initial; 0 means money was conserved
-	Negative int          `json:"negative_accounts"`
-	Deduped  int64        `json:"retries_deduped"`
-	Rejected int64        `json:"rejected"`
+	Name      string       `json:"name"`
+	Correct   bool         `json:"correct"` // did it conserve money and stay non-negative
+	Millis    int64        `json:"millis"`
+	TPS       int64        `json:"tps"`
+	P50Micros float64      `json:"p50_micros"`
+	P99Micros float64      `json:"p99_micros"`
+	Total     engine.Money `json:"total"`
+	Drift     engine.Money `json:"drift"` // final total minus initial; 0 means money was conserved
+	Negative  int          `json:"negative_accounts"`
+	Deduped   int64        `json:"retries_deduped"`
 }
 
 // Comparison is the full report from a run.
@@ -80,6 +96,7 @@ type Comparison struct {
 	Ops          int          `json:"ops"`
 	Retries      int          `json:"retries"`
 	Naive        Result       `json:"naive"`
+	Locked       Result       `json:"locked"`
 	Engine       Result       `json:"engine"`
 }
 
@@ -90,7 +107,7 @@ type op struct {
 	amount engine.Money
 }
 
-// Run executes the workload against both implementations and returns the report.
+// Run executes the workload against all three implementations.
 func Run(p Params) Comparison {
 	p = p.clamp()
 
@@ -99,21 +116,21 @@ func Run(p Params) Comparison {
 		ids[i] = fmt.Sprintf("acct-%02d", i)
 	}
 	ops := buildOps(ids, p.Transfers, p.DupFrac)
-	retries := len(ops) - p.Transfers
 	initial := engine.Money(int64(p.Accounts) * int64(p.SeedBalance))
 
 	return Comparison{
 		Params:       p,
 		InitialTotal: initial,
 		Ops:          len(ops),
-		Retries:      retries,
+		Retries:      len(ops) - p.Transfers,
 		Naive:        runNaive(ids, p.SeedBalance, ops, p.Workers, initial),
+		Locked:       runLocked(ids, p.SeedBalance, ops, p.Workers, initial),
 		Engine:       runEngine(ids, p.SeedBalance, ops, p.Workers, initial),
 	}
 }
 
 func buildOps(ids []string, transfers int, dupFrac float64) []op {
-	rng := rand.New(rand.NewSource(1)) // fixed seed: both runs see identical work
+	rng := rand.New(rand.NewSource(1)) // fixed seed: every run sees identical work
 	ops := make([]op, 0, transfers+int(float64(transfers)*dupFrac))
 	for i := 0; i < transfers; i++ {
 		a := rng.Intn(len(ids))
@@ -141,12 +158,10 @@ func runNaive(ids []string, seed engine.Money, ops []op, workers int, initial en
 		l.CreateAccount(id)
 		l.Deposit(id, seed)
 	}
-
-	elapsed := drive(len(ops), workers, func(i int) {
+	elapsed, lat := drive(len(ops), workers, func(i int) {
 		o := ops[i]
 		l.Transfer(o.key, o.from, o.to, o.amount)
 	})
-
 	total := l.Total()
 	neg := 0
 	for _, id := range ids {
@@ -154,7 +169,30 @@ func runNaive(ids []string, seed engine.Money, ops []op, workers int, initial en
 			neg++
 		}
 	}
-	return finish(elapsed, len(ops), total, total-initial, neg, 0, 0)
+	return finish("naive", elapsed, lat, total, total-initial, neg, 0)
+}
+
+func runLocked(ids []string, seed engine.Money, ops []op, workers int, initial engine.Money) Result {
+	l := locked.New()
+	for _, id := range ids {
+		l.CreateAccount(id)
+		l.Deposit(id, seed)
+	}
+	var deduped int64
+	elapsed, lat := drive(len(ops), workers, func(i int) {
+		o := ops[i]
+		if l.Transfer(o.key, o.from, o.to, o.amount) {
+			atomic.AddInt64(&deduped, 1)
+		}
+	})
+	total := l.Total()
+	neg := 0
+	for _, id := range ids {
+		if l.Balance(id) < 0 {
+			neg++
+		}
+	}
+	return finish("locked", elapsed, lat, total, total-initial, neg, deduped)
 }
 
 func runEngine(ids []string, seed engine.Money, ops []op, workers int, initial engine.Money) Result {
@@ -164,18 +202,13 @@ func runEngine(ids []string, seed engine.Money, ops []op, workers int, initial e
 		_ = e.CreateAccount(id)
 		e.Deposit(id, seed)
 	}
-
-	var deduped, rejected int64
-	elapsed := drive(len(ops), workers, func(i int) {
+	var deduped int64
+	elapsed, lat := drive(len(ops), workers, func(i int) {
 		o := ops[i]
-		r := e.Transfer(o.key, o.from, o.to, o.amount)
-		if r.Deduped {
+		if e.Transfer(o.key, o.from, o.to, o.amount).Deduped {
 			atomic.AddInt64(&deduped, 1)
-		} else if r.Err != "" {
-			atomic.AddInt64(&rejected, 1)
 		}
 	})
-
 	var total engine.Money
 	neg := 0
 	for _, a := range e.Accounts() {
@@ -184,12 +217,13 @@ func runEngine(ids []string, seed engine.Money, ops []op, workers int, initial e
 			neg++
 		}
 	}
-	return finish(elapsed, len(ops), total, total-initial, neg, deduped, rejected)
+	return finish("engine", elapsed, lat, total, total-initial, neg, deduped)
 }
 
 // drive runs fn(i) for i in [0,n) across the given number of workers, pulling
-// indexes from a shared atomic counter, and returns how long it took.
-func drive(n, workers int, fn func(i int)) time.Duration {
+// indexes from a shared atomic counter, and records each call's latency.
+func drive(n, workers int, fn func(i int)) (time.Duration, []int64) {
+	lat := make([]int64, n)
 	start := time.Now()
 	var idx int64 = -1
 	var wg sync.WaitGroup
@@ -202,26 +236,40 @@ func drive(n, workers int, fn func(i int)) time.Duration {
 				if int(i) >= n {
 					return
 				}
+				t0 := time.Now()
 				fn(int(i))
+				lat[i] = time.Since(t0).Nanoseconds()
 			}
 		}()
 	}
 	wg.Wait()
-	return time.Since(start)
+	return time.Since(start), lat
 }
 
-func finish(elapsed time.Duration, ops int, total, drift engine.Money, neg int, deduped, rejected int64) Result {
+func finish(name string, elapsed time.Duration, lat []int64, total, drift engine.Money, neg int, deduped int64) Result {
 	var tps int64
 	if elapsed > 0 {
-		tps = int64(float64(ops) / elapsed.Seconds())
+		tps = int64(float64(len(lat)) / elapsed.Seconds())
 	}
+	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
 	return Result{
-		Millis:   elapsed.Milliseconds(),
-		TPS:      tps,
-		Total:    total,
-		Drift:    drift,
-		Negative: neg,
-		Deduped:  deduped,
-		Rejected: rejected,
+		Name:      name,
+		Correct:   drift == 0 && neg == 0,
+		Millis:    elapsed.Milliseconds(),
+		TPS:       tps,
+		P50Micros: float64(pct(lat, 0.50)) / 1000,
+		P99Micros: float64(pct(lat, 0.99)) / 1000,
+		Total:     total,
+		Drift:     drift,
+		Negative:  neg,
+		Deduped:   deduped,
 	}
+}
+
+func pct(sorted []int64, p float64) int64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	i := int(float64(len(sorted)-1) * p)
+	return sorted[i]
 }
