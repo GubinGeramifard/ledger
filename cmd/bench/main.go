@@ -1,11 +1,6 @@
-// Command bench runs the same concurrent transfer workload against the naive
-// ledger and against the engine, then prints what each one did to the money.
-//
-// The workload isolates one thing: correctness under concurrency. Every account
-// starts with a balance so large that no transfer is ever legitimately rejected,
-// so any change in the total is not a business rule firing, it is money being
-// created or destroyed by a race. A fraction of the operations are exact
-// duplicates (simulated network retries) to exercise idempotency.
+// Command bench runs one concurrent transfer workload against three ledgers,
+// naive (no sync), locked (one global mutex), and the single-writer engine, and
+// prints what each did to the money and how fast it went.
 package main
 
 import (
@@ -22,45 +17,48 @@ func main() {
 	flag.IntVar(&p.Transfers, "transfers", p.Transfers, "number of unique transfers")
 	flag.IntVar(&p.Workers, "workers", p.Workers, "concurrent workers")
 	flag.Float64Var(&p.DupFrac, "dupes", p.DupFrac, "fraction of transfers resent as retries")
+	trials := flag.Int("trials", 1, "repeat the workload this many times")
 	flag.Parse()
 
-	c := bench.Run(p)
+	for t := 1; t <= *trials; t++ {
+		if *trials > 1 {
+			fmt.Printf("── trial %d/%d ──\n", t, *trials)
+		}
+		c := bench.Run(p)
+		fmt.Printf("Workload: %d accounts, %d transfers (+%d retries), %d workers\n\n",
+			c.Params.Accounts, c.Params.Transfers, c.Retries, c.Params.Workers)
 
-	fmt.Printf("Workload: %d accounts, %d transfers (+%d retries), %d workers\n\n",
-		c.Params.Accounts, c.Params.Transfers, c.Retries, c.Params.Workers)
-	report("Naive ledger", c.Naive, c.InitialTotal)
-	report("Engine", c.Engine, c.InitialTotal)
-
-	fmt.Println("Summary")
-	fmt.Printf("  The naive ledger created or destroyed $%s and re-applied all %d retries.\n",
-		absMoney(c.Naive.Drift), c.Retries)
-	fmt.Printf("  The engine kept the books exact: $0 drift, 0 negative accounts, %d retries deduped,\n",
-		c.Engine.Deduped)
-	fmt.Printf("  while sustaining %s transfers/sec on a single core.\n", commas(c.Engine.TPS))
-}
-
-func report(name string, r bench.Result, initial engine.Money) {
-	fmt.Printf("%s\n", name)
-	fmt.Printf("  time:            %d ms\n", r.Millis)
-	fmt.Printf("  throughput:      %s transfers/sec\n", commas(r.TPS))
-	fmt.Printf("  final total:     $%s   (started $%s)\n", r.Total, initial)
-	fmt.Printf("  money conjured:  $%s\n", r.Drift)
-	fmt.Printf("  negative accts:  %d\n", r.Negative)
-	if r.Deduped > 0 || r.Rejected > 0 {
-		fmt.Printf("  retries deduped: %d\n", r.Deduped)
-		fmt.Printf("  rejected:        %d\n", r.Rejected)
+		fmt.Printf("%-8s %13s %9s %9s %16s %9s\n", "", "throughput", "p50", "p99", "money conjured", "verdict")
+		row(c.Naive)
+		row(c.Locked)
+		row(c.Engine)
+		fmt.Println()
+		fmt.Printf("Naive lost %s to lost updates. Locked and engine both kept the books exact;\n",
+			dollars(abs(c.Naive.Drift)))
+		fmt.Printf("the difference between them is how they serialize: one global mutex vs a\n")
+		fmt.Printf("single-writer state machine (%s/s vs %s/s, p99 %.1fµs vs %.1fµs).\n\n",
+			commas(c.Locked.TPS), commas(c.Engine.TPS), c.Locked.P99Micros, c.Engine.P99Micros)
 	}
-	fmt.Println()
 }
 
-func absMoney(m engine.Money) engine.Money {
+func row(r bench.Result) {
+	verdict := "LOSES MONEY"
+	if r.Correct {
+		verdict = "exact"
+	}
+	fmt.Printf("%-8s %10s/s %7.1fµs %7.1fµs %16s %9s\n",
+		r.Name, commas(r.TPS), r.P50Micros, r.P99Micros, "$"+dollars(r.Drift), verdict)
+}
+
+func dollars(m engine.Money) string { return m.String() }
+
+func abs(m engine.Money) engine.Money {
 	if m < 0 {
 		return -m
 	}
 	return m
 }
 
-// commas formats an integer with thousands separators.
 func commas(n int64) string {
 	neg := n < 0
 	if neg {

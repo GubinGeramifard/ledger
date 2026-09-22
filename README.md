@@ -1,5 +1,7 @@
 # ⚖️ Tally
 
+[![CI](https://github.com/GubinGeramifard/ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/GubinGeramifard/ledger/actions/workflows/ci.yml)
+
 **A double-entry ledger engine that cannot lose money under concurrency.**
 
 Tally moves money between accounts the way a payment system has to: exactly. Every
@@ -35,19 +37,32 @@ Both are invisible until the system is under load, and both move real money.
 
 ## The result
 
-Run the benchmark (`go run ./cmd/bench`). A representative run on a laptop, 20
-accounts, 500,000 concurrent transfers across 16 workers, plus 25,000 retries:
+Run the benchmark (`go run ./cmd/bench`). It runs the same workload, 20 accounts,
+500,000 concurrent transfers across 16 workers, plus 25,000 retries, against three
+ledgers. A representative run on a laptop:
 
-| | Naive ledger | Tally engine |
-|---|---|---|
-| Throughput | ~21,000,000 /s | ~620,000 /s |
-| **Money created or destroyed** | **~$3,900,000** | **$0.00** |
-| Accounts left negative | varies | 0 |
-| Retries handled | re-applied all of them | 25,000 deduped |
+| | Naive | Global mutex | Single-writer engine |
+|---|---|---|---|
+| Correct? | **no** | yes | yes |
+| **Money created or destroyed** | **~$3,700,000** | **$0.00** | **$0.00** |
+| Throughput | ~18,000,000 /s | ~990,000 /s | ~620,000 /s |
+| Retries | re-applied all | 25,000 deduped | 25,000 deduped |
 
-The naive ledger is faster precisely because it skips the work that keeps money
-correct. Tally still sustains hundreds of thousands of transfers per second on a
-single core while keeping the ledger exact.
+### Why not just a mutex?
+
+The naive ledger is a strawman, and the benchmark says so: a **global mutex** is
+also correct, and it is even faster than the engine at this scale. So why the
+single-writer design?
+
+Because a single global lock is a serialization point that does not scale past one
+core and whose tail latency grows under contention, and because holding a lock
+across a disk `fsync` (needed for durability) serializes every commit on I/O. The
+single-writer state machine gives up a little raw throughput for something more
+valuable: a **deterministic command log**. The same commands always produce the
+same state, which is exactly what makes write-ahead-log replay safe, lets commits
+be batched (group commit) without holding a lock, and lets the ledger be sharded
+across cores without rewriting the transfer logic. "Correct" is the easy part;
+"correct in a way that stays correct as you add durability and scale" is the point.
 
 ---
 
@@ -83,12 +98,23 @@ test that writes history, reopens a fresh engine, and asserts the balances match
 ## Correctness tests
 
 ```bash
-go test -race ./...
+go test -race ./...                                    # unit + property + crash tests
+go test -run=x -fuzz=FuzzLedger ./internal/engine      # fuzz the invariants
 ```
 
-The suite runs under the race detector and covers double-entry conservation, the
-no-overdraft rule, idempotent retries, 64,000 transfers across 32 goroutines with
-the invariant held, and write-ahead-log recovery.
+Everything runs under the race detector on every push ([CI](.github/workflows/ci.yml)),
+and covers:
+
+- **Double-entry conservation, no-overdraft, idempotency** as focused unit tests.
+- **Concurrency:** 64,000 transfers across 32 goroutines, asserting the invariant
+  holds and no account is overdrawn.
+- **Property-based testing:** thousands of randomized transfers across several
+  seeds, asserting after every run that money is conserved and the total is zero.
+- **Fuzzing:** a `FuzzLedger` target lets the fuzzer generate arbitrary transfer
+  sequences and checks the invariants hold for all of them.
+- **Crash recovery:** an abrupt "crash" (no clean shutdown) must reproduce every
+  balance from the log, and a torn final record (a half-written line from a crash
+  mid-`append`) must be ignored while every complete record is applied.
 
 ---
 

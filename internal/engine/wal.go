@@ -78,6 +78,16 @@ func (w *WAL) Close() error {
 	return w.f.Close()
 }
 
+// crashClose releases the file handle WITHOUT flushing the buffer, modelling a
+// process that dies abruptly. With fsync enabled nothing is buffered, so every
+// acknowledged record is already durable; this is used only to simulate a crash
+// in tests while still releasing the OS handle.
+func (w *WAL) crashClose() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.f.Close()
+}
+
 // ReadWAL reads every record from the log at path, in order. A missing file is
 // treated as an empty log so a fresh node starts cleanly.
 func ReadWAL(path string) ([]Record, error) {
