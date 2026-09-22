@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: tally-ledger
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/stats
+    autoDeploy: true
