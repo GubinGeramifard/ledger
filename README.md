@@ -12,6 +12,11 @@ The project ships with a benchmark that proves it: the same concurrent workload 
 run against a naive ledger and against Tally's engine, and the naive one is shown
 creating and destroying millions of dollars while Tally stays exact.
 
+**Live demo:** https://tally-ledger-1d83.onrender.com — create accounts, move
+money, and press "Run stress test" to see the comparison in the browser. (Hosted
+on a free tier, so the first request may take a moment to wake, and throughput is
+lower than the laptop numbers below.)
+
 ---
 
 ## The problem
