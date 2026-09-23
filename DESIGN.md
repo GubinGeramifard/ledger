@@ -69,6 +69,44 @@ Measured (`go run ./cmd/bench -durable`): ~490 transfers/sec for the mutex versu
 ~6,300 for group commit, about **13x**. Because the single writer owns the write
 path, it can batch the expensive part; a lock-per-transfer design cannot.
 
+### Sharding: scaling past one core
+
+One writer means one core for the write path. To scale, accounts are partitioned
+across N independent single-writer shards (`internal/sharded`), hashed by id. A
+transfer whose two accounts land on the same shard runs entirely on that shard, in
+parallel with transfers on every other shard.
+
+The interesting case is a transfer whose accounts live on different shards: it
+must be atomic across two independent writers. Tally uses a two-phase protocol
+built on per-shard **clearing accounts**, the same idea as the nostro/vostro
+accounts banks use to settle between themselves:
+
+1. **Source shard:** debit `from`, credit this shard's clearing account.
+2. **Dest shard:** debit that shard's clearing account, credit `to`.
+
+Each phase is an ordinary balanced posting applied by one shard's single writer,
+so **every shard sums to zero at every instant** and the money is only ever in one
+place: in `from`, in a clearing account (in transit), or in `to`. Both accounts
+are validated before phase 1 so phase 2 cannot fail after the money has moved, and
+each phase is idempotent (keyed `k:out` / `k:in`), so a retried transfer is safe.
+The property that every shard, not just the whole system, stays balanced is what
+the concurrency test asserts, across many goroutines mixing same- and cross-shard
+transfers, under the race detector.
+
+Measured (`go run ./cmd/bench -shards`, 12-core laptop, 64 workers, no cross-shard
+traffic): ~830k transfers/sec on 1 shard rising to ~2.4M on 8 (about 2.9x). It is
+sub-linear because each transfer is a channel hand-off to a shard, not raw CPU
+work, and cross-shard transfers cost more because they touch two shards; but
+partitioning clearly moves the write path off a single core.
+
+**Crash-safe cross-shard transfers** are the one piece left for a durable
+multi-shard deployment. The fix is a durable outbox: when the source shard
+completes phase 1 it logs the intent to credit the dest shard; on recovery it
+replays any un-acknowledged intent (idempotently, so no double credit), which
+completes an in-doubt transfer. The in-memory sharded engine demonstrates the
+protocol and the scaling; wiring the outbox into each shard's write-ahead log is
+the production step.
+
 ### Determinism enables recovery
 
 Because commands are applied in a single, deterministic order, the write-ahead log
@@ -89,9 +127,10 @@ Tally is a focused engine, not a production database. Deliberately out of scope:
 
 - **Replication / high availability.** It is single-node. A production system
   would replicate the log (Raft or similar) so a node failure does not lose data.
-- **Horizontal scale.** One writer means one core for the write path. The design
-  shards cleanly (partition accounts across writers, with a two-phase path for
-  cross-shard transfers), but that is not built here.
+- **Durable, multi-node sharding.** The sharded engine (above) scales the write
+  path across cores in memory, but its shards do not yet persist or replicate, and
+  cross-shard transfers are not yet crash-safe (the durable-outbox step is
+  designed but not built).
 - **A network protocol, auth, or multi-tenancy.** The HTTP API is a thin demo
   layer over the engine.
 
