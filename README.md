@@ -80,6 +80,34 @@ See **[DESIGN.md](DESIGN.md)** for the full rationale: the alternatives consider
 (per-account locks, one global mutex, single-writer), why each was or wasn't
 chosen, what is deliberately out of scope, and how I would productionize it.
 
+### Scaling across cores (sharding)
+
+One writer means one core. To scale, accounts are partitioned across N single-writer
+shards (`internal/sharded`); same-shard transfers run fully in parallel. A transfer
+across two shards must be atomic across two independent writers, handled with a
+two-phase protocol over per-shard **clearing accounts** (like the accounts banks use
+to settle between each other): debit `from` into the source shard's clearing, then
+credit `to` from the dest shard's clearing. Every phase is a balanced posting, so
+**every shard stays summed to zero at every instant**, money is never in two places,
+and each phase is idempotent so retries are safe. The concurrency test asserts this
+across many goroutines mixing same- and cross-shard transfers, under `-race`.
+
+Measured (`go run ./cmd/bench -shards -workers 64`, 12-core laptop, no cross-shard
+traffic):
+
+| Shards | Throughput | Speedup |
+|---|---|---|
+| 1 | ~830,000 /s | 1.0x |
+| 2 | ~1,240,000 /s | 1.5x |
+| 4 | ~1,900,000 /s | 2.3x |
+| 8 | ~2,400,000 /s | 2.9x |
+
+Sub-linear because each transfer is a channel hand-off, not raw CPU work, and
+cross-shard transfers touch two shards; but partitioning clearly moves the write
+path off a single core. Making cross-shard transfers crash-safe (a durable outbox,
+replayed idempotently on recovery) is the remaining production step, described in
+DESIGN.md.
+
 ---
 
 ## How it works
@@ -143,7 +171,9 @@ ledger/
 │   │   └── web/         single-page dashboard (vanilla JS)
 │   └── bench/           command-line naive-vs-engine benchmark
 └── internal/
-    ├── engine/          the ledger: state machine, money, WAL, recovery
+    ├── engine/          the ledger: state machine, money, WAL, recovery, group commit
+    ├── sharded/         partitions accounts across single-writer shards (cross-shard 2PC)
+    ├── locked/          a global-mutex ledger, for the benchmark contrast
     ├── naive/           the deliberately-wrong ledger, for contrast
     └── bench/           shared workload runner (used by cmd/bench and the API)
 ```
@@ -166,8 +196,9 @@ ledger/
 go test -race ./...
 
 # The benchmark
-go run ./cmd/bench                 # defaults
-go run ./cmd/bench -transfers 2000000 -workers 32
+go run ./cmd/bench                       # three-way: naive vs mutex vs engine
+go run ./cmd/bench -durable              # durable throughput: mutex fsync vs group commit
+go run ./cmd/bench -shards -workers 64   # how the sharded engine scales across cores
 
 # The server + dashboard
 go run ./cmd/server                # http://localhost:8080

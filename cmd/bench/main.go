@@ -20,7 +20,20 @@ func main() {
 	trials := flag.Int("trials", 1, "repeat the workload this many times")
 	durable := flag.Bool("durable", false, "instead, measure durable throughput (fsync-per-op mutex vs group-commit engine)")
 	durN := flag.Int("durable-transfers", 10000, "transfers for the durable benchmark")
+	shards := flag.Bool("shards", false, "instead, measure how the sharded engine scales across cores")
+	cross := flag.Float64("cross", 0.1, "fraction of cross-shard transfers for the sharding benchmark")
 	flag.Parse()
+
+	if *shards {
+		c := bench.RunSharded([]int{1, 2, 4, 8}, 96, p.Transfers, p.Workers, *cross)
+		fmt.Printf("Sharded scaling: %d accounts, %d transfers, %d workers, %.0f%% cross-shard\n\n",
+			c.Accounts, c.Transfers, c.Workers, c.CrossFrac*100)
+		fmt.Printf("%-8s %14s %9s\n", "shards", "throughput", "speedup")
+		for _, r := range c.Rows {
+			fmt.Printf("%-8d %11s/s %8.2fx\n", r.Shards, commas(r.TPS), r.Speedup)
+		}
+		return
+	}
 
 	if *durable {
 		c, err := bench.RunDurable(*durN, p.Workers)

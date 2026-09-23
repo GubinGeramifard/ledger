@@ -29,6 +29,7 @@ import (
 	"github.com/GubinGeramifard/ledger/internal/engine"
 	"github.com/GubinGeramifard/ledger/internal/locked"
 	"github.com/GubinGeramifard/ledger/internal/naive"
+	"github.com/GubinGeramifard/ledger/internal/sharded"
 )
 
 // Params configures a run.
@@ -367,4 +368,103 @@ func tps(ops int, d time.Duration) int64 {
 		return 0
 	}
 	return int64(float64(ops) / d.Seconds())
+}
+
+// ShardRow is throughput at one shard count.
+type ShardRow struct {
+	Shards  int     `json:"shards"`
+	TPS     int64   `json:"tps"`
+	Millis  int64   `json:"millis"`
+	Speedup float64 `json:"speedup"` // vs 1 shard
+}
+
+// ShardScaling reports how throughput scales with shard count.
+type ShardScaling struct {
+	Accounts  int        `json:"accounts"`
+	Transfers int        `json:"transfers"`
+	Workers   int        `json:"workers"`
+	CrossFrac float64    `json:"cross_frac"`
+	Rows      []ShardRow `json:"rows"`
+}
+
+// RunSharded measures the sharded engine's throughput at each shard count, with a
+// controlled fraction of cross-shard transfers, to show how partitioning scales
+// the write path across cores.
+func RunSharded(shardCounts []int, accounts, transfers, workers int, crossFrac float64) ShardScaling {
+	ids := make([]string, accounts)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("acct-%03d", i)
+	}
+	out := ShardScaling{Accounts: accounts, Transfers: transfers, Workers: workers, CrossFrac: crossFrac}
+	var base int64
+	for _, n := range shardCounts {
+		groups := make([][]string, n)
+		for _, id := range ids {
+			g := sharded.ShardIndex(n, id)
+			groups[g] = append(groups[g], id)
+		}
+		var nonempty []int
+		for i, g := range groups {
+			if len(g) > 0 {
+				nonempty = append(nonempty, i)
+			}
+		}
+		ops := buildShardOps(groups, nonempty, transfers, crossFrac)
+
+		e := sharded.New(n)
+		for _, id := range ids {
+			_ = e.CreateAccount(id)
+			e.Deposit(id, 100_000_000_00)
+		}
+		elapsed, _ := drive(len(ops), workers, func(i int) {
+			o := ops[i]
+			e.Transfer(o.key, o.from, o.to, o.amount)
+		})
+		e.Close()
+
+		t := tps(len(ops), elapsed)
+		if n == shardCounts[0] {
+			base = t
+		}
+		sp := 1.0
+		if base > 0 {
+			sp = float64(t) / float64(base)
+		}
+		out.Rows = append(out.Rows, ShardRow{Shards: n, TPS: t, Millis: elapsed.Milliseconds(), Speedup: sp})
+	}
+	return out
+}
+
+func buildShardOps(groups [][]string, nonempty []int, transfers int, crossFrac float64) []op {
+	rng := rand.New(rand.NewSource(1))
+	ops := make([]op, 0, transfers)
+	for i := 0; i < transfers; i++ {
+		sg := nonempty[rng.Intn(len(nonempty))]
+		from := groups[sg][rng.Intn(len(groups[sg]))]
+
+		crossPossible := len(nonempty) > 1
+		sameShardDistinctPossible := len(groups[sg]) > 1
+		cross := crossPossible && (rng.Float64() < crossFrac || !sameShardDistinctPossible)
+
+		var to string
+		if cross {
+			dg := sg
+			for dg == sg {
+				dg = nonempty[rng.Intn(len(nonempty))]
+			}
+			to = groups[dg][rng.Intn(len(groups[dg]))]
+		} else {
+			to = from
+			for to == from {
+				to = groups[sg][rng.Intn(len(groups[sg]))]
+			}
+		}
+		ops = append(ops, op{
+			key:    fmt.Sprintf("s%d", i),
+			from:   from,
+			to:     to,
+			amount: engine.Money(rng.Int63n(1000) + 1),
+		})
+	}
+	return ops
 }
