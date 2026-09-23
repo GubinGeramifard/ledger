@@ -235,7 +235,7 @@
         <div class="uth-row"><div class="uth-k">Single-writer</div><div class="uth-d">One goroutine owns every balance, so there are no data races and no locks to get wrong, and the command order is deterministic.</div></div>
         <div class="uth-row"><div class="uth-k">Double-entry &middot; integer cents</div><div class="uth-d">Each transfer debits and credits by the same amount in whole cents, so the ledger always sums to zero. Never floats.</div></div>
         <div class="uth-row"><div class="uth-k">Idempotency keys</div><div class="uth-d">A retried payment carries a key; the engine returns the first result and never charges twice.</div></div>
-        <div class="uth-row"><div class="uth-k">Write-ahead log</div><div class="uth-d">Every command is durably appended before it is acknowledged; after a crash, state rebuilds by replaying the log.</div></div>
+        <div class="uth-row"><div class="uth-k">Write-ahead log &middot; group commit</div><div class="uth-d">Every command is fsync'd before it is acknowledged, batched so one fsync covers many transfers, about 13x faster than fsync-under-a-lock. After a crash, state rebuilds by replaying the log.</div></div>
       </div>
     </div>
 

@@ -49,10 +49,21 @@ type Stats struct {
 	Total     Money  `json:"total"` // must always be zero
 }
 
+// cmd is one unit of work for the run loop: the mutation to apply, and the
+// channel to signal once it is durably committed.
+type cmd struct {
+	fn   func()
+	done chan struct{}
+}
+
+// maxBatch caps how many commands one fsync can cover, bounding worst-case
+// latency under heavy load.
+const maxBatch = 4096
+
 // Engine is a single ledger. Its methods are safe to call from any number of
 // goroutines; each call is serialized onto the run loop.
 type Engine struct {
-	ops  chan func()
+	ops  chan cmd
 	quit chan struct{}
 
 	// Everything below is owned exclusively by the run loop.
@@ -61,26 +72,54 @@ type Engine struct {
 	wal      *WAL
 	seq      uint64
 	count    uint64
+	dirty    bool            // the current batch has unsynced log records
+	batch    []chan struct{} // reused each loop iteration
 }
 
 // New creates an empty engine with no durable log. The run loop starts
 // immediately.
 func New() *Engine {
 	e := &Engine{
-		ops:      make(chan func(), 1024),
+		ops:      make(chan cmd, 1024),
 		quit:     make(chan struct{}),
 		accounts: map[string]*Account{ExternalAccount: {ID: ExternalAccount}},
 		seen:     map[string]TransferResult{},
+		batch:    make([]chan struct{}, 0, maxBatch),
 	}
 	go e.loop()
 	return e
 }
 
+// loop is the single writer. It applies commands one at a time, but commits them
+// to disk in groups: it keeps draining and applying commands while any are
+// immediately available, then does ONE fsync for the whole group and only then
+// acknowledges every caller. This "group commit" amortizes the expensive fsync
+// across many transfers, so durable throughput scales with load instead of being
+// capped at one fsync per transfer. Crucially, no caller is acknowledged until
+// its record is on disk, so the durability guarantee is never weakened.
 func (e *Engine) loop() {
 	for {
 		select {
-		case fn := <-e.ops:
-			fn()
+		case c := <-e.ops:
+			e.dirty = false
+			e.batch = e.batch[:0]
+			c.fn()
+			e.batch = append(e.batch, c.done)
+			for more := true; more && len(e.batch) < maxBatch; {
+				select {
+				case c2 := <-e.ops:
+					c2.fn()
+					e.batch = append(e.batch, c2.done)
+				default:
+					more = false
+				}
+			}
+			if e.dirty && e.wal != nil {
+				_ = e.wal.sync()
+			}
+			for _, d := range e.batch {
+				d <- struct{}{}
+			}
 		case <-e.quit:
 			return
 		}
@@ -93,14 +132,10 @@ func (e *Engine) loop() {
 // reused instead of thrown away.
 var donePool = sync.Pool{New: func() any { return make(chan struct{}, 1) }}
 
-// submit runs fn on the run loop and waits for it to finish, giving callers a
-// synchronous API over the serialized state.
+// submit runs fn on the run loop and waits for it to be committed.
 func (e *Engine) submit(fn func()) {
 	done := donePool.Get().(chan struct{})
-	e.ops <- func() {
-		fn()
-		done <- struct{}{}
-	}
+	e.ops <- cmd{fn: fn, done: done}
 	<-done
 	donePool.Put(done)
 }
@@ -111,6 +146,7 @@ func (e *Engine) Close() error {
 	e.submit(func() {
 		if e.wal != nil {
 			err = e.wal.Close()
+			e.wal = nil
 		}
 	})
 	close(e.quit)
@@ -226,11 +262,13 @@ func (e *Engine) remember(key string, res TransferResult) {
 	}
 }
 
-// log appends a record to the write-ahead log when one is attached. It is a
-// no-op during replay (see Recover) and when running without durability.
+// log buffers a record in the write-ahead log when one is attached, marking the
+// batch dirty so the run loop knows to fsync before acknowledging. It is a no-op
+// during replay (see Recover) and when running without durability.
 func (e *Engine) log(r Record) {
 	if e.wal != nil {
 		_ = e.wal.append(r)
+		e.dirty = true
 	}
 }
 

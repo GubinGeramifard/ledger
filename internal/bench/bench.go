@@ -19,6 +19,8 @@ package bench
 import (
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -272,4 +274,97 @@ func pct(sorted []int64, p float64) int64 {
 	}
 	i := int(float64(len(sorted)-1) * p)
 	return sorted[i]
+}
+
+// DurableResult is one implementation's durable-throughput number.
+type DurableResult struct {
+	Name   string `json:"name"`
+	Millis int64  `json:"millis"`
+	TPS    int64  `json:"tps"`
+}
+
+// DurableComparison contrasts a mutex that fsyncs under its lock with the engine
+// that group-commits.
+type DurableComparison struct {
+	Transfers   int           `json:"transfers"`
+	Workers     int           `json:"workers"`
+	MutexFsync  DurableResult `json:"mutex_fsync"`
+	GroupCommit DurableResult `json:"group_commit"`
+	Speedup     float64       `json:"speedup"`
+}
+
+// RunDurable measures durable throughput: real transfers, real fsyncs. The mutex
+// ledger fsyncs on every transfer while holding its lock; the engine appends to
+// its write-ahead log and lets the run loop batch the fsyncs (group commit). It
+// uses far fewer transfers than the in-memory benchmark because an fsync-per-op
+// design is orders of magnitude slower.
+func RunDurable(transfers, workers int) (DurableComparison, error) {
+	if transfers < 1 {
+		transfers = 10000
+	}
+	if workers < 1 {
+		workers = 16
+	}
+	const n = 8
+	const seed = engine.Money(100_000_000_00)
+
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("acct-%d", i)
+	}
+	ops := buildOps(ids, transfers, 0)
+
+	dir, err := os.MkdirTemp("", "tally-durable")
+	if err != nil {
+		return DurableComparison{}, err
+	}
+	defer os.RemoveAll(dir)
+
+	// Mutex + fsync-per-transfer.
+	dl, err := locked.NewDurable(filepath.Join(dir, "mutex.log"))
+	if err != nil {
+		return DurableComparison{}, err
+	}
+	for _, id := range ids {
+		dl.CreateAccount(id)
+		dl.Deposit(id, seed)
+	}
+	mElapsed, _ := drive(len(ops), workers, func(i int) {
+		o := ops[i]
+		dl.Transfer(o.from, o.to, o.amount)
+	})
+	_ = dl.Close()
+
+	// Engine + group commit (durable WAL).
+	e, err := engine.Recover(filepath.Join(dir, "engine.wal"), true)
+	if err != nil {
+		return DurableComparison{}, err
+	}
+	for _, id := range ids {
+		_ = e.CreateAccount(id)
+		e.Deposit(id, seed)
+	}
+	eElapsed, _ := drive(len(ops), workers, func(i int) {
+		o := ops[i]
+		e.Transfer(o.key, o.from, o.to, o.amount)
+	})
+	_ = e.Close()
+
+	m := DurableResult{Name: "mutex-fsync", Millis: mElapsed.Milliseconds(), TPS: tps(len(ops), mElapsed)}
+	g := DurableResult{Name: "group-commit", Millis: eElapsed.Milliseconds(), TPS: tps(len(ops), eElapsed)}
+	speedup := 0.0
+	if mElapsed > 0 {
+		speedup = float64(mElapsed) / float64(eElapsed)
+	}
+	return DurableComparison{
+		Transfers: transfers, Workers: workers,
+		MutexFsync: m, GroupCommit: g, Speedup: speedup,
+	}, nil
+}
+
+func tps(ops int, d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return int64(float64(ops) / d.Seconds())
 }
