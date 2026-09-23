@@ -26,29 +26,29 @@ const (
 	recTransfer = "transfer"
 )
 
-// WAL is an append-only write-ahead log stored as JSON lines. Each applied
-// command is written (and optionally fsync'd) before it is acknowledged, so a
-// crash can never lose an acknowledged transfer.
+// WAL is an append-only write-ahead log stored as JSON lines. Records are
+// buffered by append and made durable by sync; the engine's run loop appends a
+// group of records and then calls sync once for the whole group (group commit).
 type WAL struct {
-	mu    sync.Mutex
-	f     *os.File
-	w     *bufio.Writer
-	fsync bool
+	mu      sync.Mutex
+	f       *os.File
+	w       *bufio.Writer
+	durable bool
 }
 
-// OpenWAL opens (creating if needed) the log at path for appending. When fsync
-// is true every append is flushed to stable storage before returning, which is
-// the durable-but-slower mode; when false, appends are buffered for throughput.
-func OpenWAL(path string, fsync bool) (*WAL, error) {
+// OpenWAL opens (creating if needed) the log at path for appending. When durable
+// is true, sync flushes to stable storage with fsync; when false, sync only
+// flushes to the OS (fast, but a crash can lose the last records).
+func OpenWAL(path string, durable bool) (*WAL, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open wal: %w", err)
 	}
-	return &WAL{f: f, w: bufio.NewWriter(f), fsync: fsync}, nil
+	return &WAL{f: f, w: bufio.NewWriter(f), durable: durable}, nil
 }
 
-// append writes one record. It is called only from the engine's single run
-// loop, so the mutex only guards against a concurrent Close.
+// append buffers one record without flushing. It is called only from the
+// engine's single run loop; the mutex only guards against a concurrent Close.
 func (w *WAL) append(r Record) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -56,32 +56,41 @@ func (w *WAL) append(r Record) error {
 	if err != nil {
 		return err
 	}
-	if _, err := w.w.Write(append(b, '\n')); err != nil {
+	_, err = w.w.Write(append(b, '\n'))
+	return err
+}
+
+// sync flushes buffered records and, when durable, fsyncs them to disk. This is
+// the commit point: the engine calls it once per batch, before acknowledging any
+// caller in that batch.
+func (w *WAL) sync() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.w.Flush(); err != nil {
 		return err
 	}
-	if w.fsync {
-		if err := w.w.Flush(); err != nil {
-			return err
-		}
+	if w.durable {
 		return w.f.Sync()
 	}
 	return nil
 }
 
-// Close flushes any buffered records and closes the file.
+// Close flushes and (when durable) fsyncs any remaining records, then closes.
 func (w *WAL) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err := w.w.Flush(); err != nil {
 		return err
 	}
+	if w.durable {
+		_ = w.f.Sync()
+	}
 	return w.f.Close()
 }
 
 // crashClose releases the file handle WITHOUT flushing the buffer, modelling a
-// process that dies abruptly. With fsync enabled nothing is buffered, so every
-// acknowledged record is already durable; this is used only to simulate a crash
-// in tests while still releasing the OS handle.
+// process that dies abruptly. Records already synced (acknowledged) are durable;
+// this is used only to simulate a crash in tests while releasing the OS handle.
 func (w *WAL) crashClose() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

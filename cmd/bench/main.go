@@ -18,7 +18,22 @@ func main() {
 	flag.IntVar(&p.Workers, "workers", p.Workers, "concurrent workers")
 	flag.Float64Var(&p.DupFrac, "dupes", p.DupFrac, "fraction of transfers resent as retries")
 	trials := flag.Int("trials", 1, "repeat the workload this many times")
+	durable := flag.Bool("durable", false, "instead, measure durable throughput (fsync-per-op mutex vs group-commit engine)")
+	durN := flag.Int("durable-transfers", 10000, "transfers for the durable benchmark")
 	flag.Parse()
+
+	if *durable {
+		c, err := bench.RunDurable(*durN, p.Workers)
+		if err != nil {
+			fmt.Println("error:", err)
+			return
+		}
+		fmt.Printf("Durable throughput: %d transfers, %d workers, real fsync\n\n", c.Transfers, c.Workers)
+		fmt.Printf("  mutex (fsync under lock):   %s transfers/sec  (%d ms)\n", commas(c.MutexFsync.TPS), c.MutexFsync.Millis)
+		fmt.Printf("  engine (group commit):      %s transfers/sec  (%d ms)\n", commas(c.GroupCommit.TPS), c.GroupCommit.Millis)
+		fmt.Printf("\n  Group commit is %.0fx faster once every transfer must survive a crash.\n", c.Speedup)
+		return
+	}
 
 	for t := 1; t <= *trials; t++ {
 		if *trials > 1 {
